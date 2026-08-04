@@ -1,0 +1,530 @@
+# GOLD Mongolian->English eval set — reversed from the certified en->mn gold.
+# input = the certified Mongolian rendering; expected = the original English source.
+# Reversal is valid: the English was the SOURCE, so it is a correct mn->en reference.
+# English has more surface variation than chrF assumes → min_chrf 0.3.
+
+- id: goldmn-hello
+  kind: deterministic
+  target: translate:mn-en
+  input: "Сайн байна уу"
+  match: chrf
+  expected: "Hello."
+  min_chrf: 0.3
+- id: goldmn-what-is-your-name
+  kind: deterministic
+  target: translate:mn-en
+  input: "Таны нэрийг хэн гэдэг вэ?"
+  match: chrf
+  expected: "What is your name?"
+  min_chrf: 0.3
+- id: goldmn-my-name-is-bat
+  kind: deterministic
+  target: translate:mn-en
+  input: "Миний нэрийг Бат гэдэг."
+  match: chrf
+  expected: "My name is Bat."
+  min_chrf: 0.3
+- id: goldmn-i-don-t-understand
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би ойлгохгүй байна."
+  match: chrf
+  expected: "I don't understand."
+  min_chrf: 0.3
+- id: goldmn-do-you-understand
+  kind: deterministic
+  target: translate:mn-en
+  input: "Та ойлгож байна уу?"
+  match: chrf
+  expected: "Do you understand?"
+  min_chrf: 0.3
+- id: goldmn-do-you-speak-english
+  kind: deterministic
+  target: translate:mn-en
+  input: "Та англиар ярьдаг уу?"
+  match: chrf
+  expected: "Do you speak English?"
+  min_chrf: 0.3
+- id: goldmn-i-am-from-america
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би Америкаас ирсэн."
+  match: chrf
+  expected: "I am from America."
+  min_chrf: 0.3
+- id: goldmn-where-are-you-from
+  kind: deterministic
+  target: translate:mn-en
+  input: "Та хаанаас ирсэн бэ?"
+  match: chrf
+  expected: "Where are you from?"
+  min_chrf: 0.3
+- id: goldmn-nice-to-meet-you
+  kind: deterministic
+  target: translate:mn-en
+  input: "Танилцсандаа баяртай байна."
+  match: chrf
+  expected: "Nice to meet you."
+  min_chrf: 0.3
+- id: goldmn-thank-you
+  kind: deterministic
+  target: translate:mn-en
+  input: "Баярлалаа."
+  match: chrf
+  expected: "Thank you."
+  min_chrf: 0.3
+- id: goldmn-how-are-you
+  kind: deterministic
+  target: translate:mn-en
+  input: "Та сайн байна уу?"
+  match: chrf
+  expected: "How are you?"
+  min_chrf: 0.3
+- id: goldmn-please-speak-slowly
+  kind: deterministic
+  target: translate:mn-en
+  input: "Аажуухан ярина уу?"
+  match: chrf
+  expected: "Please speak slowly."
+  min_chrf: 0.3
+- id: goldmn-goodbye
+  kind: deterministic
+  target: translate:mn-en
+  input: "Баяртай."
+  match: chrf
+  expected: "Goodbye."
+  min_chrf: 0.3
+- id: goldmn-excuse-me
+  kind: deterministic
+  target: translate:mn-en
+  input: "Уучлаарай."
+  match: chrf
+  expected: "Excuse me."
+  min_chrf: 0.3
+- id: goldmn-i-am-eating
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би хооллож байна."
+  match: chrf
+  expected: "I am eating."
+  min_chrf: 0.3
+- id: goldmn-i-want-to-drink-water
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би ус уухыг хүсч байна."
+  match: chrf
+  expected: "I want to drink water."
+  min_chrf: 0.3
+- id: goldmn-i-am-sleepy
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би нойртой байна."
+  match: chrf
+  expected: "I am sleepy."
+  min_chrf: 0.3
+- id: goldmn-i-am-going-home
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би гэртээ явж байна."
+  match: chrf
+  expected: "I am going home."
+  min_chrf: 0.3
+- id: goldmn-give-me-water-please
+  kind: deterministic
+  target: translate:mn-en
+  input: "Надад ус өгөөч."
+  match: chrf
+  expected: "Give me water, please."
+  min_chrf: 0.3
+- id: goldmn-this-bread-is-delicious
+  kind: deterministic
+  target: translate:mn-en
+  input: "Энэ талх амттай байна."
+  match: chrf
+  expected: "This bread is delicious."
+  min_chrf: 0.3
+- id: goldmn-i-drink-tea-every-morning
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би өглөө болгон цай уудаг."
+  match: chrf
+  expected: "I drink tea every morning."
+  min_chrf: 0.3
+- id: goldmn-i-am-hungry
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би өлссөн байна."
+  match: chrf
+  expected: "I am hungry."
+  min_chrf: 0.3
+- id: goldmn-i-am-thirsty
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би цангасан байна."
+  match: chrf
+  expected: "I am thirsty."
+  min_chrf: 0.3
+- id: goldmn-let-s-eat
+  kind: deterministic
+  target: translate:mn-en
+  input: "Идэцгээе."
+  match: chrf
+  expected: "Let's eat."
+  min_chrf: 0.3
+- id: goldmn-i-sleep-at-ten-o-clock
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би арван цагт унтдаг."
+  match: chrf
+  expected: "I sleep at ten o'clock."
+  min_chrf: 0.3
+- id: goldmn-where-is-my-home
+  kind: deterministic
+  target: translate:mn-en
+  input: "Миний гэр хаана байна вэ?"
+  match: chrf
+  expected: "Where is my home?"
+  min_chrf: 0.3
+- id: goldmn-i-am-tired
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би ядарсан байна."
+  match: chrf
+  expected: "I am tired."
+  min_chrf: 0.3
+- id: goldmn-i-am-sick
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би өвдөж байна."
+  match: chrf
+  expected: "I am sick."
+  min_chrf: 0.3
+- id: goldmn-i-am-happy
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би баяртай байна."
+  match: chrf
+  expected: "I am happy."
+  min_chrf: 0.3
+- id: goldmn-i-am-sad
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би гунигтай байна."
+  match: chrf
+  expected: "I am sad."
+  min_chrf: 0.3
+- id: goldmn-i-am-cold
+  kind: deterministic
+  target: translate:mn-en
+  input: "Надад хүйтэн байна."
+  match: chrf
+  expected: "I am cold."
+  min_chrf: 0.3
+- id: goldmn-i-am-hot
+  kind: deterministic
+  target: translate:mn-en
+  input: "Надад халуун байна."
+  match: chrf
+  expected: "I am hot."
+  min_chrf: 0.3
+- id: goldmn-help-me
+  kind: deterministic
+  target: translate:mn-en
+  input: "Надад туслаач."
+  match: chrf
+  expected: "Help me."
+  min_chrf: 0.3
+- id: goldmn-i-don-t-feel-well
+  kind: deterministic
+  target: translate:mn-en
+  input: "Бие муу байна."
+  match: chrf
+  expected: "I don't feel well."
+  min_chrf: 0.3
+- id: goldmn-my-head-hurts
+  kind: deterministic
+  target: translate:mn-en
+  input: "Толгой өвдөж байна."
+  match: chrf
+  expected: "My head hurts."
+  min_chrf: 0.3
+- id: goldmn-i-am-scared
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би айж байна."
+  match: chrf
+  expected: "I am scared."
+  min_chrf: 0.3
+- id: goldmn-i-need-a-doctor
+  kind: deterministic
+  target: translate:mn-en
+  input: "Надад эмч хэрэгтэй байна."
+  match: chrf
+  expected: "I need a doctor."
+  min_chrf: 0.3
+- id: goldmn-i-feel-better-now
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би одоо дээрдэж байна."
+  match: chrf
+  expected: "I feel better now."
+  min_chrf: 0.3
+- id: goldmn-good-morning
+  kind: deterministic
+  target: translate:mn-en
+  input: "Өглөөний мэнд."
+  match: chrf
+  expected: "Good morning."
+  min_chrf: 0.3
+- id: goldmn-good-night
+  kind: deterministic
+  target: translate:mn-en
+  input: "Сайхан амраарай."
+  match: chrf
+  expected: "Good night."
+  min_chrf: 0.3
+- id: goldmn-see-you-later
+  kind: deterministic
+  target: translate:mn-en
+  input: "Дараа уулзая."
+  match: chrf
+  expected: "See you later."
+  min_chrf: 0.3
+- id: goldmn-please-sit-down
+  kind: deterministic
+  target: translate:mn-en
+  input: "Сууна уу?"
+  match: chrf
+  expected: "Please sit down."
+  # No alternate: "Сууна уу?" is a general polite invitation ("have a seat"),
+  # not a question directed at a person about their intent. Native speaker
+  # rejected "Will you sit?" on 2026-07-16 for exactly that register shift.
+  # (Removing it costs nothing: gemma4 output "Sit down?" already matches the
+  # primary reference at chrF 0.492 vs 0.213 for the dropped alternate.)
+  min_chrf: 0.3
+- id: goldmn-please-come-in
+  kind: deterministic
+  target: translate:mn-en
+  input: "Ороорой."
+  match: chrf
+  expected: "Please come in."
+  min_chrf: 0.3
+- id: goldmn-thank-you-very-much
+  kind: deterministic
+  target: translate:mn-en
+  input: "Маш их баярлалаа."
+  match: chrf
+  expected: "Thank you very much."
+  min_chrf: 0.3
+- id: goldmn-you-re-welcome
+  kind: deterministic
+  target: translate:mn-en
+  input: "Зүгээр ээ."
+  match: chrf
+  expected: "You're welcome."
+  # Alternate: "зүгээр" genuinely carries both senses. Native-speaker verified
+  # 2026-07-16.
+  expected_any: ["You're welcome.", "It's okay"]
+  min_chrf: 0.3
+- id: goldmn-i-m-sorry
+  kind: deterministic
+  target: translate:mn-en
+  input: "Уучлаарай."
+  match: chrf
+  expected: "I'm sorry."
+  # Alternate: "уучлаарай" genuinely covers both senses. Native-speaker verified
+  # 2026-07-16.
+  # NOTE: this input is duplicated (see the "Excuse me." case) with a different
+  # reference. A model emits ONE output, so one of the two always failed; both
+  # senses are legitimate, hence both accepted here.
+  expected_any: ["I'm sorry.", "excuse me!"]
+  min_chrf: 0.3
+- id: goldmn-today-is-monday
+  kind: deterministic
+  target: translate:mn-en
+  input: "Өнөөдөр даваа гараг."
+  match: chrf
+  expected: "Today is Monday."
+  min_chrf: 0.3
+- id: goldmn-tomorrow
+  kind: deterministic
+  target: translate:mn-en
+  input: "Маргааш."
+  match: chrf
+  expected: "Tomorrow."
+  min_chrf: 0.3
+- id: goldmn-yesterday
+  kind: deterministic
+  target: translate:mn-en
+  input: "Өчигдөр."
+  match: chrf
+  expected: "Yesterday."
+  min_chrf: 0.3
+- id: goldmn-one-two-three
+  kind: deterministic
+  target: translate:mn-en
+  input: "Нэг, хоёр, гурав."
+  match: chrf
+  expected: "One, two, three."
+  min_chrf: 0.3
+- id: goldmn-what-time-is-it
+  kind: deterministic
+  target: translate:mn-en
+  input: "Одоо цаг хэд болж байна вэ?"
+  match: chrf
+  expected: "What time is it?"
+  min_chrf: 0.3
+- id: goldmn-it-is-three-o-clock
+  kind: deterministic
+  target: translate:mn-en
+  input: "Одоо цаг гурав боллоо."
+  match: chrf
+  expected: "It is three o'clock."
+  min_chrf: 0.3
+- id: goldmn-see-you-tomorrow
+  kind: deterministic
+  target: translate:mn-en
+  input: "Маргааш уулзацгаая."
+  match: chrf
+  expected: "See you tomorrow."
+  min_chrf: 0.3
+- id: goldmn-in-the-evening
+  kind: deterministic
+  target: translate:mn-en
+  input: "Оройн цагаар."
+  match: chrf
+  expected: "In the evening."
+  min_chrf: 0.3
+- id: goldmn-at-night
+  kind: deterministic
+  target: translate:mn-en
+  input: "Шөнийн цагаар."
+  match: chrf
+  expected: "At night."
+  min_chrf: 0.3
+- id: goldmn-this-week
+  kind: deterministic
+  target: translate:mn-en
+  input: "Энэ долоо хоногт."
+  match: chrf
+  expected: "This week."
+  min_chrf: 0.3
+- id: goldmn-how-many-days
+  kind: deterministic
+  target: translate:mn-en
+  input: "Хэдэн өдөр вэ?"
+  match: chrf
+  expected: "How many days?"
+  min_chrf: 0.3
+- id: goldmn-five-o-clock-in-the-morning
+  kind: deterministic
+  target: translate:mn-en
+  input: "Өглөөний тав."
+  match: chrf
+  expected: "Five o'clock in the morning."
+  min_chrf: 0.3
+- id: goldmn-where-is-the-airport
+  kind: deterministic
+  target: translate:mn-en
+  input: "Онгоцны буудал хаана байдаг вэ?"
+  match: chrf
+  expected: "Where is the airport?"
+  min_chrf: 0.3
+- id: goldmn-where-is-the-hotel
+  kind: deterministic
+  target: translate:mn-en
+  input: "Зочид буудал хаана байдаг вэ?"
+  match: chrf
+  expected: "Where is the hotel?"
+  min_chrf: 0.3
+- id: goldmn-how-much-is-this
+  kind: deterministic
+  target: translate:mn-en
+  input: "Энэ хэдэн төгрөг вэ?"
+  match: chrf
+  expected: "How much is this?"
+  min_chrf: 0.3
+- id: goldmn-how-much-is-the-ticket
+  kind: deterministic
+  target: translate:mn-en
+  input: "Тасалбар хэд вэ?"
+  match: chrf
+  expected: "How much is the ticket?"
+  min_chrf: 0.3
+- id: goldmn-turn-left
+  kind: deterministic
+  target: translate:mn-en
+  input: "Зүүн тийш эргэ."
+  match: chrf
+  expected: "Turn left."
+  min_chrf: 0.3
+- id: goldmn-turn-right
+  kind: deterministic
+  target: translate:mn-en
+  input: "Баруун тийш эргэ."
+  match: chrf
+  expected: "Turn right."
+  min_chrf: 0.3
+- id: goldmn-where-is-the-bus-stop
+  kind: deterministic
+  target: translate:mn-en
+  input: "Автобусны буудал хаана вэ?"
+  match: chrf
+  expected: "Where is the bus stop?"
+  min_chrf: 0.3
+- id: goldmn-i-want-to-buy-a-ticket
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би тасалбар авмаар байна."
+  match: chrf
+  expected: "I want to buy a ticket."
+  min_chrf: 0.3
+- id: goldmn-which-bus-goes-to-the-city-c
+  kind: deterministic
+  target: translate:mn-en
+  input: "Аль автобус хотын төв рүү явдаг вэ?"
+  match: chrf
+  expected: "Which bus goes to the city center?"
+  min_chrf: 0.3
+- id: goldmn-is-it-far-from-here
+  kind: deterministic
+  target: translate:mn-en
+  input: "Энэ эндээс хол уу?"
+  match: chrf
+  expected: "Is it far from here?"
+  min_chrf: 0.3
+- id: goldmn-i-have-a-reservation
+  kind: deterministic
+  target: translate:mn-en
+  input: "Би захиалгатай."
+  match: chrf
+  expected: "I have a reservation."
+  min_chrf: 0.3
+- id: goldmn-can-you-call-a-taxi
+  kind: deterministic
+  target: translate:mn-en
+  input: "Такси дуудаж өгөх үү?"
+  match: chrf
+  expected: "Can you call a taxi?"
+  min_chrf: 0.3
+- id: goldmn-go-straight
+  kind: deterministic
+  target: translate:mn-en
+  input: "Чигээрээ яв."
+  match: chrf
+  expected: "Go straight."
+  min_chrf: 0.3
+- id: goldmn-what-time-does-the-bus-leave
+  kind: deterministic
+  target: translate:mn-en
+  input: "Автобус хэдэн цагт хөдлөх вэ?"
+  match: chrf
+  expected: "What time does the bus leave?"
+  min_chrf: 0.3
+- id: goldmn-do-you-eat-meat
+  kind: deterministic
+  target: translate:mn-en
+  input: "Та мах иддэг үү?"
+  match: chrf
+  expected: "Do you eat meat?"
+  min_chrf: 0.3

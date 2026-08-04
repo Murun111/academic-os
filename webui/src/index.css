@@ -1,0 +1,149 @@
+@import 'tailwindcss';
+
+/* Calm workspace — warm paper-light theme.
+   Same token names as the original dark theme so components never reference
+   raw colors: deep = page, raise = panel, hi/mid/low = text tiers. */
+@theme {
+  --font-sans: 'Geist Variable', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace;
+
+  --color-deep: oklch(0.977 0.004 90);   /* warm paper page bg */
+  --color-raise: oklch(0.995 0.002 90);  /* panel: near-white card */
+  --color-raise2: oklch(0.955 0.004 90); /* secondary surface / wells */
+  --color-hi: oklch(0.235 0.008 90);     /* primary text: warm near-black */
+  --color-mid: oklch(0.45 0.008 90);     /* secondary text */
+  --color-low: oklch(0.58 0.008 90);     /* tertiary text / labels */
+  --color-line: oklch(0 0 0 / 9%);       /* border / divider */
+  --color-hairline: oklch(0 0 0 / 5%);   /* thinner border */
+
+  /* accents darkened for AA contrast on light surfaces */
+  --color-run: oklch(0.55 0.10 155);     /* sage green — success/running */
+  --color-pend: oklch(0.58 0.11 80);     /* muted amber — pending */
+  --color-fail: oklch(0.53 0.14 30);     /* muted brick — error */
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-deep);
+  color: var(--color-hi);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* live numbers must not reflow the layout when digits tick */
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: oklch(0 0 0 / 10%);
+}
+
+:focus-visible {
+  outline: 1.5px solid oklch(0 0 0 / 40%);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---- structural chrome: the only glass in the system ---- */
+@utility glass {
+  background: oklch(1 0 0 / 62%);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  border: 1px solid oklch(0 0 0 / 8%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 60%),
+    0 12px 40px oklch(0 0 0 / 10%);
+}
+
+/* overlay glass: same material, more opaque so content behind can't collide */
+@utility glass-strong {
+  /* legible even where backdrop-filter is unavailable; blur adds depth on top */
+  background: oklch(0.99 0.002 90 / 94%);
+  backdrop-filter: blur(28px) saturate(1.2);
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  border: 1px solid oklch(0 0 0 / 8%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 60%),
+    0 24px 64px oklch(0 0 0 / 14%);
+}
+
+/* solid content surface */
+@utility panel {
+  background: var(--color-raise);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px oklch(0 0 0 / 4%);
+}
+
+@utility label-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-low);
+}
+
+/* ---- backdrop drift ---- */
+@keyframes drift-a {
+  0% { transform: translate(-8%, -6%) scale(1); }
+  50% { transform: translate(6%, 8%) scale(1.15); }
+  100% { transform: translate(-8%, -6%) scale(1); }
+}
+@keyframes drift-b {
+  0% { transform: translate(10%, 4%) scale(1.1); }
+  50% { transform: translate(-6%, -10%) scale(0.95); }
+  100% { transform: translate(10%, 4%) scale(1.1); }
+}
+@keyframes drift-c {
+  0% { transform: translate(0%, 10%) scale(0.9); }
+  50% { transform: translate(4%, -4%) scale(1.1); }
+  100% { transform: translate(0%, 10%) scale(0.9); }
+}
+
+/* live pulse on status dots for active states */
+@keyframes dot-pulse {
+  0% { box-shadow: 0 0 0 0 var(--pulse-color, oklch(0.55 0.10 155 / 40%)); }
+  70% { box-shadow: 0 0 0 7px oklch(0.55 0.10 155 / 0%); }
+  100% { box-shadow: 0 0 0 0 oklch(0.55 0.10 155 / 0%); }
+}
+
+/* new feed row flash */
+@keyframes row-flash {
+  0% { background: oklch(0 0 0 / 6%); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* quiet scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0 0 0 / 18%) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: oklch(0 0 0 / 18%);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

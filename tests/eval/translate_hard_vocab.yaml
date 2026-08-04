@@ -1,0 +1,160 @@
+# HARD-VOCAB eval — uncommon words from Bawden. 19 cases.
+# RE-CERTIFIED 2026-07-06 against the column-aware re-extracted (aligned) dictionary.
+# Each case carries `expected_any`: the set of valid standard Khalkha Cyrillic
+# translations (2 independent Sonnet certifiers + Opus adjudication). chrF scores
+# the BEST match over the set, so valid synonyms are no longer penalised. The prior
+# single-reference `expected` values were derived from the OLD, column-misaligned
+# extraction and unfairly failed correct synonyms — see memory en-mn-translator-c1-handoff.
+
+- id: hv-dominate
+  kind: deterministic
+  target: translate:en-mn
+  input: "dominate"
+  match: chrf
+  expected: "ноёрхох"
+  expected_any: ["ноёрхох", "эрхшээх", "давамгайлах", "зонхилох"]
+  min_chrf: 0.4
+- id: hv-approximately
+  kind: deterministic
+  target: translate:en-mn
+  input: "approximately"
+  match: chrf
+  expected: "ойролцоогоор"
+  expected_any: ["ойролцоогоор", "барагцаалбал", "тоймлон", "тоймчлон"]
+  min_chrf: 0.4
+- id: hv-vomiting
+  kind: deterministic
+  target: translate:en-mn
+  input: "vomiting"
+  match: chrf
+  expected: "бөөлжилт"
+  expected_any: ["бөөлжилт", "бөөлжих", "бөөлжүүлэг"]
+  min_chrf: 0.4
+- id: hv-capable
+  kind: deterministic
+  target: translate:en-mn
+  input: "capable"
+  match: chrf
+  expected: "чадвартай"
+  expected_any: ["чадвартай", "чадамжтай", "чадахуйц"]
+  min_chrf: 0.4
+- id: hv-slander
+  kind: deterministic
+  target: translate:en-mn
+  input: "slander"
+  match: chrf
+  expected: "гүжирдлэг"
+  expected_any: ["гүжирдлэг", "ховлох", "гүтгэлэг", "гүтгэх"]
+  min_chrf: 0.4
+- id: hv-rupturewort
+  kind: deterministic
+  target: translate:en-mn
+  input: "rupturewort"
+  match: chrf
+  expected: "ивэргэнэ"
+  expected_any: ["ивэргэнэ"]
+  min_chrf: 0.4
+- id: hv-telegraphist
+  kind: deterministic
+  target: translate:en-mn
+  input: "telegraphist"
+  match: chrf
+  expected: "морзчин"
+  expected_any: ["морзчин", "телеграфч"]
+  min_chrf: 0.4
+- id: hv-acrocephalus
+  kind: deterministic
+  target: translate:en-mn
+  input: "acrocephalus"
+  match: chrf
+  expected: "охилбялзуухай"
+  expected_any: ["охилбялзуухай", "охин бялзуухай"]
+  min_chrf: 0.4
+- id: hv-raftsman
+  kind: deterministic
+  target: translate:en-mn
+  input: "raftsman"
+  match: chrf
+  expected: "салчин"
+  expected_any: ["салчин"]
+  min_chrf: 0.4
+- id: hv-dictionary
+  kind: deterministic
+  target: translate:en-mn
+  input: "dictionary"
+  match: chrf
+  expected: "толь бичиг"
+  expected_any: ["толь бичиг", "толь"]
+  min_chrf: 0.4
+- id: hv-ointment
+  kind: deterministic
+  target: translate:en-mn
+  input: "ointment"
+  match: chrf
+  expected: "түрхмэг"
+  expected_any: ["түрхмэг", "түрхлэг", "түрхэц", "мазь"]
+  min_chrf: 0.4
+- id: hv-ploughing
+  kind: deterministic
+  target: translate:en-mn
+  input: "ploughing"
+  match: chrf
+  expected: "хагалалт"
+  expected_any: ["хагалалт", "хагалах", "хагалгаа"]
+  min_chrf: 0.4
+- id: hv-military
+  kind: deterministic
+  target: translate:en-mn
+  input: "military"
+  match: chrf
+  expected: "цэргийн"
+  expected_any: ["цэргийн", "байлдааны"]
+  min_chrf: 0.4
+- id: hv-unnourishing
+  kind: deterministic
+  target: translate:en-mn
+  input: "unnourishing"
+  match: chrf
+  expected: "шимгүй"
+  expected_any: ["шимгүй", "нүнжиггүй"]
+  min_chrf: 0.4
+- id: hv-academic
+  kind: deterministic
+  target: translate:en-mn
+  input: "academic"
+  match: chrf
+  expected: "эрдмийн"
+  expected_any: ["эрдмийн", "эрдэм шинжилгээний", "академик"]
+  min_chrf: 0.4
+- id: hv-extinct
+  kind: deterministic
+  target: translate:en-mn
+  input: "extinct"
+  match: chrf
+  expected: "мөхмөл"
+  expected_any: ["мөхмөл", "мөхсөн", "устсан"]
+  min_chrf: 0.4
+- id: hv-brittle
+  kind: deterministic
+  target: translate:en-mn
+  input: "brittle"
+  match: chrf
+  expected: "хагарамхай"
+  expected_any: ["хагарамхай", "бутрамтгай", "хэврэг", "эмзэгхэн"]
+  min_chrf: 0.4
+- id: hv-abrasion
+  kind: deterministic
+  target: translate:en-mn
+  input: "abrasion"
+  match: chrf
+  expected: "холтролт"
+  expected_any: ["холтролт", "шалбархай"]
+  min_chrf: 0.4
+- id: hv-accelerator
+  kind: deterministic
+  target: translate:en-mn
+  input: "accelerator"
+  match: chrf
+  expected: "хурдасгуур"
+  expected_any: ["хурдасгуур", "хурдасгагч"]
+  min_chrf: 0.4

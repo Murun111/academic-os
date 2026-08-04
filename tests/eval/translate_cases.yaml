@@ -1,0 +1,22 @@
+# Fixed English↔Mongolian eval set — Phase C / C2.
+# Scores the LIVE translator (targets registered by translation_eval.register_translation_targets).
+# kind: rubric -> scored by a local-LLM judge; SKIPPED when offline (no false failures in CI).
+# Every real mistranslation you find should become a permanent case here.
+
+- id: en-mn-greeting
+  kind: rubric
+  target: translate:en-mn
+  input: "Good morning."
+  rubric: "The output is a correct, natural Mongolian (Khalkha) rendering of the greeting 'Good morning' (e.g. өглөөний мэнд). PASS if it conveys the greeting; FAIL if it is English, empty, or unrelated."
+
+- id: en-mn-water
+  kind: rubric
+  target: translate:en-mn
+  input: "I drink water every day."
+  rubric: "The output is a correct Mongolian translation meaning 'I drink water every day.' PASS if the core meaning (drink + water + every day) is preserved."
+
+- id: mn-en-greeting
+  kind: rubric
+  target: translate:mn-en
+  input: "Сайн байна уу?"
+  rubric: "The output is a correct English translation of the Mongolian greeting (e.g. 'Hello' or 'How are you?'). PASS if it is a natural English greeting/question conveying that."

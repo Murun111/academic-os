@@ -1,0 +1,1 @@
+"""Academic OS module routers."""

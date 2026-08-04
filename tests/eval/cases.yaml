@@ -1,0 +1,31 @@
+# Fixed eval set for the B2 harness self-test (roadmap §2.3).
+# Every production failure should become a permanent case here.
+# kind: deterministic  -> scored by an assertion (no LLM needed)
+# kind: rubric         -> scored by a local-LLM judge (SKIPPED when offline)
+
+- id: echo-exact
+  kind: deterministic
+  target: builtin:echo
+  input: "hello world"
+  match: equals
+  expected: "hello world"
+
+- id: echo-contains
+  kind: deterministic
+  target: builtin:echo
+  input: "the quick brown fox"
+  match: contains
+  expected: "brown"
+
+- id: echo-regex
+  kind: deterministic
+  target: builtin:echo
+  input: "order #4271 confirmed"
+  match: regex
+  expected: "#\\d{4}"
+
+- id: echo-rubric-smoke
+  kind: rubric
+  target: builtin:echo
+  input: "The capital of Mongolia is Ulaanbaatar."
+  rubric: "The output states that Ulaanbaatar is the capital of Mongolia."

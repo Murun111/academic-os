@@ -1,0 +1,65 @@
+# KB eval set — spec docs/specs/obsidian-kb-product.md, AC-11 (roadmap KB-6).
+# Scores compile/Q&A quality on the B2 harness so improvements are provable via
+# `python scripts/run_evals.py tests/eval/kb_cases.yaml`.
+# Every KB regression becomes a case here (AC-11).
+#
+# kind: deterministic -> scored by an assertion, HERMETIC (no LLM).
+# kind: rubric        -> scored by a local-LLM judge (SKIPPED when offline).
+
+# --- kb:compile_concepts — multi-concept + slug-dedup invariant ------------
+
+# A multi-concept extraction yields the expected concept count (>=2) and slugs.
+# NOTE: `equals` pins slug ORDER — this relies on _normalize_concepts preserving
+# input order. Do NOT add an innocent sort there without updating this expected.
+- id: kb-compile-multi-concept
+  kind: deterministic
+  target: kb:compile_concepts
+  input: '{"summary": "Overview of Mongolian language.", "concepts": [{"name": "Vowel harmony", "slug": "mongolian-vowel-harmony", "summary": "s", "body": "b", "links": []}, {"name": "Mongolian script", "slug": "mongolian-script", "summary": "s", "body": "b", "links": []}, {"name": "Grammatical cases", "slug": "mongolian-cases", "summary": "s", "body": "b", "links": []}]}'
+  match: equals
+  expected: '{"count": 3, "slugs": ["mongolian-vowel-harmony", "mongolian-script", "mongolian-cases"]}'
+
+# Regression: colliding slugs must NOT collapse/drop — two distinct concepts
+# whose names normalize to the same slug must dedupe to DISTINCT slugs, not one.
+# `equals` pins the exact deduped output (…, "vowel-harmony-2"); a `contains
+# count:2` check would still pass if both slugs were identical, defeating the test.
+- id: kb-compile-slug-collision-not-dropped
+  kind: deterministic
+  target: kb:compile_concepts
+  input: '{"summary": "x", "concepts": [{"name": "Vowel Harmony", "slug": "vowel-harmony", "summary": "a", "body": "A", "links": []}, {"name": "Vowel.Harmony", "slug": "vowel.harmony", "summary": "b", "body": "B", "links": []}]}'
+  match: equals
+  expected: '{"count": 2, "slugs": ["vowel-harmony", "vowel-harmony-2"]}'
+
+# --- kb:qa_cited — boundary-safe citation extraction -----------------------
+
+# A clean citation IS returned when the answer references the exact page path.
+- id: kb-qa-clean-citation-returned
+  kind: deterministic
+  target: kb:qa_cited
+  input: '{"answer": "The answer is in wiki/a.md as described.", "candidates": ["wiki/a.md", "wiki/b.md"]}'
+  match: equals
+  expected: '["wiki/a.md"]'
+
+# Regression: a prefix false-positive is NOT cited — an answer mentioning
+# "wiki/a.md.bak" must not be treated as citing "wiki/a.md".
+- id: kb-qa-prefix-false-positive-not-cited
+  kind: deterministic
+  target: kb:qa_cited
+  input: '{"answer": "See the archived copy wiki/a.md.bak for details.", "candidates": ["wiki/a.md", "wiki/b.md"]}'
+  match: equals
+  expected: '[]'
+
+# --- rubric — judged by the local LLM, SKIPPED offline (never a false pass) --
+# This case exercises the rubric JUDGE + offline-SKIP path only (not the full
+# Q&A pipeline: the target echoes a candidate answer rather than generating one).
+# It is NOT self-fulfilling — the input answer does not restate the rubric's
+# success criterion, so the judge must actually verify the factual claim (this
+# differs from an earlier draft whose input asserted "the answer cites X" against
+# a rubric checking for that same citation, which any judge would rubber-stamp).
+# A real end-to-end rubric (question -> live answer_question -> judge) is a future
+# KB followup. The offline-skip guarantee stays proven by
+# tests/test_kb_evals.py::test_rubric_case_is_skipped_offline.
+- id: kb-qa-quality-rubric
+  kind: rubric
+  target: kb:qa_quality
+  input: "The capital of Mongolia is Ulaanbaatar."
+  rubric: "The output states the correct capital of Mongolia."

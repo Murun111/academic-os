@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Node
+node_modules/
+.svelte-kit/
+build/
+.vite/
+
+# Secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Runtime data
+data/runs.jsonl
+data/scheduler.lock
+data/launchd.*.log
+data/agent-cache/
+data/ollama-warmup.lock
+data/*.pid
+data/*.tmp
+# Backend runtime state (audit trails, caches — generated at runtime, not source)
+backend/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+logs/
+
+# External tools (each is its own repo with its own .git, node_modules, etc.)
+tools/
+
+
+# Agentic OS Template - Downstream Ignore Defaults
+
+# Runtime State (work logs are session-local; private is never committed)
+.agentcortex/context/work/*.md
+.agentcortex/context/work/*.lock.json
+!.agentcortex/context/work/.gitkeep.md
+.agentcortex/context/.guard_receipt.json
+.agentcortex/context/.guard_locks/
+.agentcortex/context/private/
+.agent/private/
+
+# Deploy Artifacts
+.agentcortex-src/
+*.acx-incoming
+*.acx-local
+
+# Third-party AI Tool Local State
+.openrouter/
+.claude-chat/
+.cursor/
+.antigravity/scratch/
+.claude-flow/
+
+# End Agentic OS Template - Downstream Ignore Defaults
+
+webui/node_modules/
+webui/dist/
+/vault
+/projects
+*.db
+*.rvf
+*.rvf.lock
+.next/
+dist/
+memory.db
+.pytest_cache/
