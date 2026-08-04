@@ -10,6 +10,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+LLAMA_BUILD="b10273"
+if [ ! -x vendor/llama/llama-server ]; then
+  echo "── 0/4 fetching llama-server ($LLAMA_BUILD, macOS arm64)"
+  mkdir -p vendor/llama
+  curl -sL "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-macos-arm64.tar.gz" -o /tmp/llama-dl.tar.gz
+  TMPX="$(mktemp -d)"
+  tar -xzf /tmp/llama-dl.tar.gz -C "$TMPX"
+  cp "$TMPX"/llama-*/llama-server "$TMPX"/llama-*/*.dylib vendor/llama/
+  rm -rf "$TMPX" /tmp/llama-dl.tar.gz
+fi
+
 echo "── 1/4 building webui"
 (cd webui && VITE_API_MODE=real npm run build >/dev/null)
 
@@ -18,6 +29,7 @@ echo "── 2/4 freezing backend (PyInstaller)"
   --paths . \
   --add-data "webui/dist:webui/dist" \
   --add-data "examples/agents:examples/agents" \
+  --add-data "vendor/llama:vendor/llama" \
   --hidden-import backend.app \
   --collect-submodules backend \
   --collect-submodules uvicorn \

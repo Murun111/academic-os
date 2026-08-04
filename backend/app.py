@@ -163,9 +163,11 @@ from backend.routers.documents import router as documents_router  # noqa: E402
 from backend.routers.routines import router as routines_router  # noqa: E402
 from backend.routers.profile import router as profile_router  # noqa: E402
 from backend.routers.connectors import router as connectors_router  # noqa: E402
+from backend.routers.localai import router as localai_router  # noqa: E402
 
 app.include_router(profile_router)
 app.include_router(connectors_router)
+app.include_router(localai_router)
 app.include_router(applications_router)
 app.include_router(courses_router)
 app.include_router(study_router)

@@ -91,3 +91,4 @@ memory.db
 build/
 dist/
 *.spec
+vendor/

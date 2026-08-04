@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelHead, Pill, Btn, EmptyState } from '../components/ui'
+import { LocalAiPanel } from '../components/LocalAiPanel'
 import {
   routinesApi,
   type DeadlineDigest,
@@ -26,6 +27,8 @@ export function Routines() {
         <p className="label-mono mb-1">agent routines · on-demand</p>
         <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Routines</h1>
       </div>
+
+      <LocalAiPanel />
 
       {catalogLoaded && catalog.length === 0 && (
         <EmptyState title="No routines available" hint="Backend may be unreachable." />

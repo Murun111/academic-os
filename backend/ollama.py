@@ -120,15 +120,22 @@ class OllamaService:
             self._client = None
 
     async def health(self) -> bool:
-        """Return True if Ollama is reachable and has the configured model loaded."""
+        """True if Ollama has the model, OR the bundled llama-server is up."""
         try:
             client = await self._get_client()
             r = await client.get("/api/tags", timeout=5.0)
             r.raise_for_status()
             data = r.json()
             names = {m["name"] for m in data.get("models", [])}
-            return self.model in names
+            if self.model in names:
+                return True
         except (httpx.HTTPError, httpx.RequestError, KeyError):
+            pass
+        # Bundled fallback: llama.cpp server (see services/local_llm.py)
+        try:
+            from backend.services import local_llm
+            return local_llm.server_running()
+        except Exception:
             return False
 
     async def warm_model(self) -> float:
@@ -175,9 +182,13 @@ class OllamaService:
             payload["tools"] = tools
         if think:
             payload["think"] = True
-        r = await client.post("/api/chat", json=payload)
-        r.raise_for_status()
-        data = r.json()
+        try:
+            r = await client.post("/api/chat", json=payload)
+            r.raise_for_status()
+            data = r.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # Ollama not installed/running → bundled llama-server fallback.
+            data = await self._local_fallback_chat(messages, tools)
         return ChatResponse(
             message=_parse_message(data),
             model=data.get("model", use_model),
@@ -186,6 +197,29 @@ class OllamaService:
             eval_count=data.get("eval_count", 0),
             done_reason=data.get("done_reason", "stop"),
         )
+
+    async def _local_fallback_chat(
+        self, messages: list[ChatMessage], tools: Optional[list[dict[str, Any]]]
+    ) -> dict[str, Any]:
+        """Chat via the bundled llama.cpp server (OpenAI format), translated
+        back to the Ollama response shape. Raises the original-style
+        ConnectError if the local server can't be brought up either."""
+        from backend.services import local_llm
+        import asyncio as _asyncio
+        up = await _asyncio.to_thread(local_llm.ensure_running)
+        if not up:
+            raise httpx.ConnectError("no local AI: Ollama absent and bundled model not installed")
+        payload: dict[str, Any] = {
+            "model": "local",
+            "messages": local_llm.to_openai_messages(messages),
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = tools  # already OpenAI-shaped
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as c:
+            r = await c.post(f"{local_llm.BASE_URL}/v1/chat/completions", json=payload)
+            r.raise_for_status()
+            return local_llm.from_openai_response(r.json())
 
     async def stream_chat(
         self,
