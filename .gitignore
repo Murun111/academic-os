@@ -86,3 +86,8 @@ webui/dist/
 dist/
 memory.db
 .pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.spec
