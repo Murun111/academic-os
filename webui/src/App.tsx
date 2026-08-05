@@ -16,13 +16,12 @@ import { Documents } from './pages/Documents'
 import { Routines } from './pages/Routines'
 import { Agents } from './pages/Agents'
 import { Approvals } from './pages/Approvals'
-import { Memory } from './pages/Memory'
-import { Traces } from './pages/Traces'
+import { Settings } from './pages/Settings'
 
 const TITLES: Record<string, string> = {
   '/': 'Dashboard', '/applications': 'Applications', '/courses': 'Courses', '/study': 'Study',
-  '/documents': 'Documents', '/routines': 'Routines', '/chat': 'Chat', '/agents': 'Agents',
-  '/approvals': 'Approvals', '/memory': 'Memory', '/traces': 'Traces',
+  '/documents': 'Documents', '/routines': 'Routines', '/chat': 'Chat', '/agents': 'Assistants',
+  '/approvals': 'Approvals', '/settings': 'Settings',
 }
 
 import { NO_MOTION } from './lib/motion'
@@ -46,8 +45,7 @@ function Shell() {
       <Route path="/chat" element={<Chat />} />
       <Route path="/agents" element={<Agents />} />
       <Route path="/approvals" element={<Approvals />} />
-      <Route path="/memory" element={<Memory />} />
-      <Route path="/traces" element={<Traces />} />
+      <Route path="/settings" element={<Settings />} />
     </Routes>
   )
 

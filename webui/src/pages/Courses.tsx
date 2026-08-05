@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react'
 import {
   coursesApi, gradeTone,
   type Assignment, type AssignmentStatus, type CourseSummary,
 } from '../lib/coursesApi'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
-import { LmsSyncPanel } from '../components/LmsSyncPanel'
 
 function fmtGrade(grade: number | null): string {
   return grade == null ? '—' : `${grade.toFixed(1)}%`
@@ -296,7 +296,11 @@ export function Courses() {
           ))}
         </div>
 
-      <LmsSyncPanel onSynced={() => { void load() }} />
+      <p className="mt-6 border-t border-hairline pt-4 text-[12.5px] text-low">
+        Connect Canvas or a school calendar link in{' '}
+        <Link to="/settings" className="text-mid underline decoration-dotted hover:text-hi">Settings</Link>
+        {' '}to pull courses and due dates in automatically.
+      </p>
     </div>
   )
 }

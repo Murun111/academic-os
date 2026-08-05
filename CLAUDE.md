@@ -36,6 +36,10 @@ Commands:
 
 **Stage-aware UI:** every per-stage difference lives in `webui/src/lib/stageConfig.ts` as data — never `if (stage === ...)` in components. `useState(cfg.X)` captures the pre-onboarding fallback; sync with a `useEffect` on the cfg value.
 
+**Track-aware UI:** second axis (pre-med/pre-law/…) in `webui/src/lib/trackConfig.ts`, same data-only rule. Only applies when `trackApplies(stage)` (undergrad/beyond). Track overrides layer on top of stage config (`trackCfg?.x ?? cfg.x`).
+
+**Dev backend has no --reload:** after editing backend code, kill the uvicorn on 7878 and restart it — the old process silently serves stale code (pydantic drops unknown fields, so new profile fields "vanish" on save).
+
 **Agent tools:** `web.search`/`web.fetch` are plain-httpx (no camofox) and classified read-only in `autonomy.py`'s `_READ_SET`; `academics.add_application` is deliberately unlisted so the cautious posture gates it → Approvals queue. Approving executes the tool.
 
 **Agent run API:** run reply field is `id` (not `run_id`); the output field is `result`.
@@ -53,7 +57,8 @@ Commands:
 - Storage: JSONL per module under data root (data/applications/*, data/courses/*, etc.)
 
 **Frontend:**
-- `webui/src/pages/` — 11 pages: Applications, Courses, Study, Documents, Routines, Dashboard, Chat, Agents, Approvals, Memory, Traces
+- `webui/src/pages/` — 10 pages: Applications, Courses, Study, Documents, Routines, Dashboard, Chat, Agents (labeled "Assistants" in UI), Approvals, Settings (gear at sidebar bottom: name, stage, LocalAiPanel, LmsSyncPanel, data-folder note). Memory/Traces pages removed 2026-08-04 (student-facing cut); backend /api/memory + traces endpoints kept (agent runner + Chat recall use them)
+- Profile PUT replaces the whole profile.json — store.ts always sends name alongside stage (setStage used to wipe the name)
 - `webui/src/lib/` — module API clients (applicationsApi.ts, coursesApi.ts, etc.)
 - Build output: `webui/dist/` (served by FastAPI at `/`)
 

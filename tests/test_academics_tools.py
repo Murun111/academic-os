@@ -12,6 +12,7 @@ def test_web_tools_classified_read():
     assert classify("web.search", {}).decision == "allow"
     assert classify("web.fetch", {}).decision == "allow"
     assert classify("academics.upcoming_deadlines", {}).decision == "allow"
+    assert classify("academics.student_profile", {}).decision == "allow"
 
 
 def test_add_application_is_gated():
@@ -56,6 +57,19 @@ async def test_add_application_creates_card():
 async def test_add_application_validates():
     assert (await academics_tools.add_application(name=""))["error"] == "name_required"
     assert (await academics_tools.add_application(name="X", type="phd"))["error"] == "bad_type"
+
+
+@pytest.mark.asyncio
+async def test_student_profile_reads_stage_track(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    d = tmp_path / "data"
+    d.mkdir()
+    (d / "profile.json").write_text(
+        '{"stage": "gapyear", "name": "Sam", "track": "premed", "test_date": "2027-01-15"}'
+    )
+    p = await academics_tools.student_profile()
+    assert p == {"stage": "gapyear", "track": "premed", "test_date": "2027-01-15"}
+    assert "name" not in p  # agents never see the student's name
 
 
 @pytest.mark.asyncio

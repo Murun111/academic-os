@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Copy, Play, Waypoints, X } from 'lucide-react'
+import { Copy, Play, X } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { api } from '../lib/api'
 import { Btn, Mono, Pill, StatusDot, timeAgo } from '../components/ui'
@@ -12,7 +11,6 @@ import type { AgentInfo, AgentStats } from '../lib/types'
 export function Agents() {
   const { agents, runs, runAgent } = useOs()
   const [selected, setSelected] = useState<string | null>(null)
-  const navigate = useNavigate()
   const { menu, openMenu, closeMenu } = useContextMenu()
   const drawerRef = useRef<HTMLElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -44,15 +42,14 @@ export function Agents() {
 
   const agentMenu = (a: AgentInfo) => [
     { label: 'Run now', icon: Play, onSelect: () => void runAgent(a.name) },
-    { label: 'View traces', icon: Waypoints, onSelect: () => navigate('/traces') },
     { label: 'Copy name', icon: Copy, onSelect: () => void navigator.clipboard.writeText(a.name) },
   ]
 
   return (
     <div className="mx-auto max-w-[1200px]">
       <div className="mb-6">
-        <p className="label-mono mb-1">runtime · loader · autonomy · critic</p>
-        <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Agents</h1>
+        <p className="label-mono mb-1">helpers that work in the background</p>
+        <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Assistants</h1>
       </div>
 
       <div ref={listRef} className="flex flex-col gap-2">

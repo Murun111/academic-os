@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { api } from './api'
 import { profileApi } from './profileApi'
 import type { Stage } from './stageConfig'
+import type { Track } from './trackConfig'
 import type { AgentInfo, Approval, Health, OsEvent, Run } from './types'
 
 export interface Toast {
@@ -22,8 +23,16 @@ interface OsStore {
   stage: Stage | null
   stageLoaded: boolean
   stagePickerOpen: boolean
+  userName: string
+  track: Track | null
+  testDate: string
+  reminders: boolean
   boot: () => void
   setStage: (stage: Stage) => Promise<void>
+  setUserName: (name: string) => Promise<void>
+  setTrack: (track: Track | null) => Promise<void>
+  setTestDate: (testDate: string) => Promise<void>
+  setReminders: (reminders: boolean) => Promise<void>
   openStagePicker: (open: boolean) => void
   setPalette: (open: boolean) => void
   dismissToast: (id: string) => void
@@ -46,11 +55,17 @@ export const useOs = create<OsStore>((set, get) => ({
   stage: null,
   stageLoaded: false,
   stagePickerOpen: false,
+  userName: '',
+  track: null,
+  testDate: '',
+  reminders: true,
 
   boot: () => {
     if (get().booted) return
     set({ booted: true })
-    void profileApi.get().then((p) => set({ stage: p.stage, stageLoaded: true }))
+    void profileApi.get().then((p) =>
+      set({ stage: p.stage, userName: p.name, track: p.track, testDate: p.test_date, reminders: p.reminders, stageLoaded: true }),
+    )
     void api.agents().then((agents) => set({ agents }))
     void api.runs().then((runs) => set({ runs }))
     void api.approvals().then((approvals) => set({ approvals }))
@@ -71,9 +86,35 @@ export const useOs = create<OsStore>((set, get) => ({
     })
   },
 
+  // the backend PUT replaces the whole profile — every setter sends every field
   setStage: async (stage) => {
     set({ stage, stagePickerOpen: false })
-    await profileApi.set(stage)
+    const s = get()
+    await profileApi.set(stage, s.userName, s.track, s.testDate, s.reminders)
+  },
+
+  setUserName: async (userName) => {
+    set({ userName })
+    const s = get()
+    if (s.stage) await profileApi.set(s.stage, userName, s.track, s.testDate, s.reminders)
+  },
+
+  setTrack: async (track) => {
+    set({ track })
+    const s = get()
+    if (s.stage) await profileApi.set(s.stage, s.userName, track, s.testDate, s.reminders)
+  },
+
+  setTestDate: async (testDate) => {
+    set({ testDate })
+    const s = get()
+    if (s.stage) await profileApi.set(s.stage, s.userName, s.track, testDate, s.reminders)
+  },
+
+  setReminders: async (reminders) => {
+    set({ reminders })
+    const s = get()
+    if (s.stage) await profileApi.set(s.stage, s.userName, s.track, s.testDate, reminders)
   },
 
   openStagePicker: (stagePickerOpen) => set({ stagePickerOpen }),

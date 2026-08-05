@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { study, kindTone, isOverdue, isToday, type Agenda, type AgendaItem } from '../lib/studyApi'
+import { study, kindTone, isOverdue, type Agenda, type AgendaItem } from '../lib/studyApi'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
 import { GuidePanel } from '../components/GuidePanel'
 
@@ -18,7 +18,14 @@ function addDays(iso: string, n: number): string {
 
 function dayLabel(iso: string): string {
   const d = new Date(`${iso}T00:00:00`)
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.getDate()}`
+}
+
+// compact color coding for the week grid — dot instead of a wide pill
+const KIND_COLOR: Record<AgendaItem['kind'], string> = {
+  application: 'var(--color-pend)',
+  assignment: 'var(--color-acc)',
+  task: 'var(--color-low)',
 }
 
 function KindPill({ kind }: { kind: AgendaItem['kind'] }) {
@@ -144,61 +151,64 @@ export function Study() {
         </Panel>
       )}
 
-      {/* today + overdue */}
+      {/* week at a glance — all 7 days fit the width, no scrolling */}
       <Panel className="mb-6">
+        <PanelHead label="next 7 days" />
+        <div className="grid grid-cols-7 gap-2 px-4 pb-4">
+          {weekDates.map((d) => {
+            const items = byDate.get(d) ?? []
+            const isTodayCol = d === today
+            return (
+              <div key={d} className={`min-w-0 rounded-[10px] p-1.5 ${isTodayCol ? 'bg-black/4' : ''}`}>
+                <div className="mb-1.5 flex items-baseline justify-between px-0.5">
+                  <span className="label-mono">{isTodayCol ? 'today' : dayLabel(d)}</span>
+                  {items.length > 0 && <Mono className="text-low">{items.length}</Mono>}
+                </div>
+                <div className="flex flex-col gap-1">
+                  {items.length === 0 && (
+                    <div className="rounded-md border border-dashed border-hairline py-1.5 text-center">
+                      <Mono className="text-low">·</Mono>
+                    </div>
+                  )}
+                  {items.map((item) => (
+                    <div
+                      key={`${item.kind}-${item.id ?? item.title}`}
+                      title={`${item.kind}: ${item.title ?? '(untitled)'}`}
+                      className="panel flex items-center gap-1.5 px-2 py-1.5"
+                    >
+                      <span
+                        className="size-1.5 shrink-0 rounded-full"
+                        style={{ background: KIND_COLOR[item.kind] }}
+                      />
+                      <p className="min-w-0 flex-1 truncate text-[12px] text-mid">{item.title ?? '(untitled)'}</p>
+                      {item.kind === 'task' && item.id && (
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          onChange={() => void handleToggleDone(item.id as string)}
+                          className="size-3 shrink-0 accent-black/70"
+                          aria-label={`Mark "${item.title ?? 'task'}" done`}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Panel>
+
+      {/* today + overdue */}
+      <Panel>
         <PanelHead label="today · overdue" right={<Mono className="text-low">{todayAndOverdue.length} items</Mono>} />
         <div className="flex flex-col gap-px px-2 pb-3">
           {!loading && todayAndOverdue.length === 0 && (
-            <EmptyState title="Nothing due today." hint="Add a task above, or check the week strip below." />
+            <EmptyState title="Nothing due today." hint="Add a task above, or check the week above." />
           )}
           {todayAndOverdue.map((item) => (
             <AgendaRow key={`${item.kind}-${item.id ?? item.title}`} item={item} onToggleDone={handleToggleDone} />
           ))}
-        </div>
-      </Panel>
-
-      {/* week strip */}
-      <Panel>
-        <PanelHead label="next 7 days" />
-        <div className="overflow-x-auto pb-3">
-          <div className="flex min-w-max gap-3 px-4">
-            {weekDates.map((d) => {
-              const items = byDate.get(d) ?? []
-              return (
-                <div key={d} className="w-[220px] shrink-0">
-                  <div className="mb-2 flex items-center justify-between px-1">
-                    <span className="label-mono">{d === today ? 'today' : dayLabel(d)}</span>
-                    <Mono className="text-low">{items.length}</Mono>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    {items.length === 0 && (
-                      <div className="rounded-[10px] border border-dashed border-hairline py-4 text-center">
-                        <Mono className="text-low">empty</Mono>
-                      </div>
-                    )}
-                    {items.map((item) => (
-                      <div key={`${item.kind}-${item.id ?? item.title}`} className="panel px-3 py-2">
-                        <div className="mb-1 flex items-center gap-2">
-                          <KindPill kind={item.kind} />
-                          {item.kind === 'task' && item.id && (
-                            <input
-                              type="checkbox"
-                              checked={false}
-                              onChange={() => void handleToggleDone(item.id as string)}
-                              className="ml-auto size-3.5 accent-black/70"
-                              aria-label={`Mark "${item.title ?? 'task'}" done`}
-                            />
-                          )}
-                        </div>
-                        <p className="truncate text-[12.5px] text-mid">{item.title ?? '(untitled)'}</p>
-                        {isToday(item.date) && <Mono className="text-low">today</Mono>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
         </div>
       </Panel>
 

@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Calendar, Check, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, Check, Plus, Search, Trash2, X } from 'lucide-react'
+import { scoutApi } from '../lib/scoutApi'
 import {
   applicationsApi, APPLICATION_STATUSES, APPLICATION_TYPES, requirementsProgress,
   type Application, type ApplicationCosts, type ApplicationStatus, type ApplicationType,
 } from '../lib/applicationsApi'
 import { useOs } from '../lib/store'
 import { stageConfig } from '../lib/stageConfig'
+import { trackApplies, trackConfig } from '../lib/trackConfig'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
 
 const STATUS_LABEL: Record<ApplicationStatus, string> = {
@@ -44,7 +47,14 @@ function DeadlineLabel({ deadline }: { deadline: string | null }) {
 
 export function Applications() {
   const stage = useOs((s) => s.stage)
+  const track = useOs((s) => s.track)
   const cfg = stageConfig(stage)
+  // track tailoring layers on top of the stage config (pre-med → "Med Schools" etc.)
+  const trackCfg = trackApplies(stage) ? trackConfig(track) : null
+  const appsTitle = trackCfg?.appsTitle ?? cfg.appsTitle
+  const appsSub = trackCfg?.appsSub ?? cfg.appsSub
+  const templateFor = (type: ApplicationType) =>
+    trackCfg?.requirementTemplates?.[type] ?? cfg.requirementTemplates[type]
   const [items, setItems] = useState<Application[]>([])
   const [deadlines, setDeadlines] = useState<Application[]>([])
   const [costs, setCosts] = useState<ApplicationCosts | null>(null)
@@ -59,6 +69,45 @@ export function Applications() {
   const [busy, setBusy] = useState(false)
   const [amountDraft, setAmountDraft] = useState('')
   const [feeDraft, setFeeDraft] = useState('')
+  const [notesDraft, setNotesDraft] = useState('')
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState<ApplicationStatus | null>(null)
+  const [showScout, setShowScout] = useState(false)
+  const [criteria, setCriteria] = useState('')
+  const [scoutState, setScoutState] = useState<'idle' | 'running' | 'done' | 'failed'>('idle')
+  const [scoutSummary, setScoutSummary] = useState('')
+  const scoutPoll = useRef<number | null>(null)
+
+  useEffect(() => () => { if (scoutPoll.current) window.clearInterval(scoutPoll.current) }, [])
+
+  const startScout = async () => {
+    const c = criteria.trim()
+    if (!c || scoutState === 'running') return
+    setScoutState('running')
+    setScoutSummary('')
+    const id = await scoutApi.search(c)
+    if (!id) {
+      setScoutState('failed')
+      setScoutSummary("Couldn't start the search — is the backend running?")
+      return
+    }
+    const startedAt = Date.now()
+    scoutPoll.current = window.setInterval(async () => {
+      const run = await scoutApi.run(id)
+      const timedOut = Date.now() - startedAt > 4 * 60_000
+      if (run && run.status !== 'running' && run.status !== 'pending') {
+        window.clearInterval(scoutPoll.current!)
+        scoutPoll.current = null
+        setScoutState(run.status === 'success' ? 'done' : 'failed')
+        setScoutSummary(run.result || run.error || 'The search finished without a summary.')
+      } else if (timedOut) {
+        window.clearInterval(scoutPoll.current!)
+        scoutPoll.current = null
+        setScoutState('failed')
+        setScoutSummary('The search is taking too long — check the Assistants page for the run.')
+      }
+    }, 3000)
+  }
 
   const load = useCallback(async () => {
     try {
@@ -84,10 +133,11 @@ export function Applications() {
   const selectedItem = items.find((i) => i.id === selected) ?? null
   const columns = APPLICATION_STATUSES.map((status) => ({ status, items: items.filter((i) => i.status === status) }))
 
-  // sync money drafts whenever the drawer selection changes
+  // sync drafts whenever the drawer selection changes
   useEffect(() => {
     setAmountDraft(selectedItem?.amount == null ? '' : String(selectedItem.amount))
     setFeeDraft(selectedItem?.app_fee == null ? '' : String(selectedItem.app_fee))
+    setNotesDraft(selectedItem?.notes ?? '')
   }, [selectedItem?.id])
 
   const commitAmount = async () => {
@@ -116,6 +166,31 @@ export function Applications() {
     await load()
   }
 
+  const commitNotes = async () => {
+    if (!selectedItem) return
+    if (notesDraft === selectedItem.notes) return
+    await applicationsApi.update(selectedItem.id, { notes: notesDraft })
+    await load()
+  }
+
+  const setStatus = async (id: string, status: ApplicationStatus) => {
+    // optimistic move so the card lands in the column instantly
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, status } : i)))
+    await applicationsApi.update(id, { status })
+    await load()
+  }
+
+  const dropOnColumn = (status: ApplicationStatus) => (e: DragEvent) => {
+    e.preventDefault()
+    const id = e.dataTransfer.getData('text/plain') || dragId
+    setDragOver(null)
+    setDragId(null)
+    if (!id) return
+    const item = items.find((i) => i.id === id)
+    if (!item || item.status === status) return
+    void setStatus(id, status)
+  }
+
   const moveStatus = async (item: Application, dir: 1 | -1) => {
     const idx = APPLICATION_STATUSES.indexOf(item.status)
     const next = APPLICATION_STATUSES[idx + dir]
@@ -128,8 +203,8 @@ export function Applications() {
     if (!formName.trim()) return
     setBusy(true)
     const created = await applicationsApi.create({ name: formName.trim(), type: formType, deadline: formDeadline || null })
-    // stage-aware requirement template: seed the checklist for this type
-    const template = cfg.requirementTemplates[formType]
+    // stage+track-aware requirement template: seed the checklist for this type
+    const template = templateFor(formType)
     if (created && template) {
       for (const label of template) {
         await applicationsApi.addRequirement(created.id, label)
@@ -144,6 +219,20 @@ export function Applications() {
 
   const toggleRequirement = async (item: Application, reqId: string, done: boolean) => {
     await applicationsApi.updateRequirement(item.id, reqId, { done: !done })
+    await load()
+  }
+
+  const seedChecklist = async () => {
+    // for cards that arrived without one (agent-found, synced) — seed the
+    // stage template for this type
+    const item = selectedItem
+    const template = item && templateFor(item.type)
+    if (!item || !template) return
+    setBusy(true)
+    for (const label of template) {
+      await applicationsApi.addRequirement(item.id, label)
+    }
+    setBusy(false)
     await load()
   }
 
@@ -179,13 +268,66 @@ export function Applications() {
     <div className="mx-auto max-w-[1200px]">
       <div className="mb-6 flex items-end justify-between">
         <div>
-          <p className="label-mono mb-1">{cfg.appsSub}</p>
-          <h1 className="text-[24px] font-semibold tracking-[-0.01em]">{cfg.appsTitle}</h1>
+          <p className="label-mono mb-1">{appsSub}</p>
+          <h1 className="text-[24px] font-semibold tracking-[-0.01em]">{appsTitle}</h1>
         </div>
-        <Btn kind="primary" onClick={() => setShowForm((s) => !s)}>
-          <span className="flex items-center gap-1.5"><Plus size={13} /> Add application</span>
-        </Btn>
+        <div className="flex items-center gap-2">
+          <Btn onClick={() => setShowScout((s) => !s)}>
+            <span className="flex items-center gap-1.5"><Search size={13} /> Find scholarships</span>
+          </Btn>
+          <Btn kind="primary" onClick={() => setShowForm((s) => !s)}>
+            <span className="flex items-center gap-1.5"><Plus size={13} /> Add application</span>
+          </Btn>
+        </div>
       </div>
+
+      <AnimatePresence>
+        {showScout && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-6 overflow-hidden"
+          >
+            <Panel className="p-4">
+              <p className="mb-2 text-[12.5px] text-mid">
+                Describe yourself and what you're looking for — your words, no forms. The scout
+                searches the web and proposes matches; nothing enters your pipeline until you
+                approve it.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  value={criteria}
+                  onChange={(e) => setCriteria(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void startScout() }}
+                  placeholder="e.g. first-gen CS major in Texas, scholarships over $5,000"
+                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-2 text-[13px] text-hi outline-none placeholder:text-low focus:border-black/25"
+                />
+                <Btn kind="primary" onClick={() => void startScout()} disabled={scoutState === 'running' || !criteria.trim()}>
+                  {scoutState === 'running' ? 'Searching…' : 'Search'}
+                </Btn>
+              </div>
+              {scoutState === 'running' && (
+                <p className="mt-2 text-[12.5px] text-mid">
+                  Searching the web — this takes a minute or two. You can leave this page; results
+                  land in <Link to="/approvals" className="underline decoration-dotted">Approvals</Link>.
+                </p>
+              )}
+              {scoutState === 'done' && (
+                <div className="mt-2">
+                  <p className="whitespace-pre-line text-[12.5px] leading-relaxed text-mid">{scoutSummary}</p>
+                  <Link to="/approvals" className="mt-1 inline-block text-[12.5px] text-hi underline decoration-dotted">
+                    Review proposals in Approvals →
+                  </Link>
+                </div>
+              )}
+              {scoutState === 'failed' && (
+                <p className="mt-2 text-[12.5px] text-fail">{scoutSummary}</p>
+              )}
+            </Panel>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {error && (
         <div className="mb-4 rounded-[10px] border border-hairline px-3 py-2.5">
@@ -271,7 +413,19 @@ export function Applications() {
         <div className="overflow-x-auto pb-2">
           <div className="flex min-w-max gap-3">
             {columns.map(({ status, items: colItems }) => (
-              <div key={status} className="w-[220px] shrink-0">
+              <div
+                key={status}
+                className={`w-[220px] shrink-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-black/4 ring-1 ring-black/10' : ''}`}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (dragOver !== status) setDragOver(status)
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(null)
+                }}
+                onDrop={dropOnColumn(status)}
+              >
                 <div className="mb-2 flex items-center justify-between px-1">
                   <span className="label-mono">{STATUS_LABEL[status]}</span>
                   <Mono className="text-low">{colItems.length}</Mono>
@@ -282,7 +436,14 @@ export function Applications() {
                     return (
                       <div
                         key={item.id}
-                        className={`panel px-3 py-2.5 transition-colors duration-150 hover:bg-raise2 ${selected === item.id ? 'border-black/15' : ''}`}
+                        draggable
+                        onDragStart={(e) => {
+                          setDragId(item.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                          e.dataTransfer.setData('text/plain', item.id)
+                        }}
+                        onDragEnd={() => { setDragId(null); setDragOver(null) }}
+                        className={`panel cursor-grab px-3 py-2.5 transition-colors duration-150 hover:bg-raise2 active:cursor-grabbing ${selected === item.id ? 'border-black/15' : ''} ${dragId === item.id ? 'opacity-40' : ''}`}
                       >
                         <button onClick={() => setSelected(item.id === selected ? null : item.id)} className="mb-1.5 block w-full text-left">
                           <span className="mb-1 block truncate text-[13px] text-hi">{item.name}</span>
@@ -293,6 +454,9 @@ export function Applications() {
                               <Mono className="text-low">{requirementsProgress(item.requirements)}</Mono>
                             )}
                           </div>
+                          {item.notes && (
+                            <p className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-low">{item.notes}</p>
+                          )}
                           {item.deadline && <div className="mt-1"><DeadlineLabel deadline={item.deadline} /></div>}
                         </button>
                         <div className="flex items-center gap-1">
@@ -387,7 +551,15 @@ export function Applications() {
             <div className="mb-4">
               <p className="label-mono mb-2">requirements</p>
               <div className="flex flex-col gap-1.5">
-                {selectedItem.requirements.length === 0 && <Mono className="text-low">none yet</Mono>}
+                {selectedItem.requirements.length === 0 && (
+                  cfg.requirementTemplates[selectedItem.type] ? (
+                    <Btn onClick={() => void seedChecklist()} disabled={busy}>
+                      {busy ? 'Adding…' : `Add ${selectedItem.type} checklist`}
+                    </Btn>
+                  ) : (
+                    <Mono className="text-low">none yet</Mono>
+                  )
+                )}
                 {selectedItem.requirements.map((r) => (
                   <div key={r.id} className="flex items-center gap-2">
                     <button
@@ -415,12 +587,17 @@ export function Applications() {
               </div>
             </div>
 
-            {selectedItem.notes && (
-              <div className="mb-4">
-                <p className="label-mono mb-1.5">notes</p>
-                <p className="text-[12.5px] leading-relaxed text-mid">{selectedItem.notes}</p>
-              </div>
-            )}
+            <div className="mb-4">
+              <p className="label-mono mb-1.5">description</p>
+              <textarea
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                onBlur={() => void commitNotes()}
+                placeholder="What is this? Award details, why it's a fit, who to ask for letters…"
+                rows={4}
+                className="w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2 text-[12.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-black/25"
+              />
+            </div>
 
             {selectedItem.url && (
               <a href={selectedItem.url} target="_blank" rel="noreferrer" className="mb-4 block font-mono text-[11px] text-low hover:text-mid">

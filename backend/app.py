@@ -121,7 +121,11 @@ async def lifespan(app: FastAPI):
     # Lazy: only connects when /api/browser/* is first hit. If the
     # server isn't running, the endpoint returns 503 with a helpful msg.
     app.state.browser = BrowserService()
+    # Daily deadline reminder (native macOS notification, one per day).
+    from backend.services.deadline_reminders import reminder_loop
+    _reminder_task = asyncio.create_task(reminder_loop())
     yield
+    _reminder_task.cancel()
     await app.state.ollama.close()
     app.state.agent_scheduler.stop()
 

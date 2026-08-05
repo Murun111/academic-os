@@ -2,7 +2,7 @@
 // as data — components read this map and never branch on stage directly.
 import type { ApplicationType } from './applicationsApi'
 
-export type Stage = 'highschool' | 'undergrad' | 'grad' | 'beyond'
+export type Stage = 'highschool' | 'undergrad' | 'gapyear' | 'grad' | 'beyond'
 
 export interface StageConfig {
   label: string            // human name shown in the picker
@@ -42,6 +42,19 @@ export const STAGES: Record<Stage, StageConfig> = {
       grad: ['Statement of purpose', 'Transcript', 'Recommendation letters', 'GRE scores (if required)', 'CV / resume'],
     },
   },
+  gapyear: {
+    label: 'Gap year',
+    tagline: 'Graduated — working or studying for the next step',
+    appsTitle: 'Applications',
+    appsSub: 'programs · scholarships · deadlines',
+    defaultType: 'grad',
+    navOrder: ['/', '/applications', '/study', '/documents', '/routines', '/courses'],
+    requirementTemplates: {
+      grad: ['Statement of purpose', 'CV / resume', 'Transcript request', 'Recommendation letters (ask early — professors forget you)', 'Entrance exam score', 'Application fee or waiver'],
+      scholarship: ['Essay', 'Transcript', 'Recommendation letter', 'Proof of eligibility'],
+      exchange: ['Application form', 'CV / resume', 'Statement of interest'],
+    },
+  },
   grad: {
     label: 'Grad school',
     tagline: 'Programs, funding, and the SOP grind',
@@ -68,7 +81,7 @@ export const STAGES: Record<Stage, StageConfig> = {
   },
 }
 
-export const STAGE_ORDER: Stage[] = ['highschool', 'undergrad', 'grad', 'beyond']
+export const STAGE_ORDER: Stage[] = ['highschool', 'undergrad', 'gapyear', 'grad', 'beyond']
 
 /** Config for the current stage; falls back to a neutral default pre-onboarding. */
 export function stageConfig(stage: Stage | null): StageConfig {

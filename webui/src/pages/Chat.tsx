@@ -98,7 +98,7 @@ export function Chat() {
       <div className="flex min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="flex-1 overflow-y-auto pt-1 pb-4">
           {!active || active.messages.length === 0 ? (
-            <EmptyState title="Say something." hint="Memory is recalled per turn and injected as a system message." />
+            <EmptyState title="Say something." hint="Ask about your deadlines, essays, or courses." />
           ) : (
             <div className="flex flex-col gap-4">
               {active.messages.map((m, i) =>

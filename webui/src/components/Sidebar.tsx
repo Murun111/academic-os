@@ -1,12 +1,12 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutGrid, MessageSquare, Bot, ShieldCheck, Brain, Waypoints,
+  LayoutGrid, MessageSquare, Bot, ShieldCheck, Settings,
   Command, GraduationCap, BookOpen, CalendarCheck, Files, Sparkles,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { stageConfig, STAGES } from '../lib/stageConfig'
+import { trackApplies, trackConfig } from '../lib/trackConfig'
 import { Kbd, StatusDot } from './ui'
-import { apiMode } from '../lib/api'
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutGrid, end: true },
@@ -16,10 +16,8 @@ const NAV = [
   { to: '/documents', label: 'Documents', icon: Files },
   { to: '/routines', label: 'Routines', icon: Sparkles },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
-  { to: '/agents', label: 'Agents', icon: Bot },
+  { to: '/agents', label: 'Assistants', icon: Bot },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck },
-  { to: '/memory', label: 'Memory', icon: Brain },
-  { to: '/traces', label: 'Traces', icon: Waypoints },
 ]
 
 export function Sidebar() {
@@ -39,8 +37,10 @@ export function Sidebar() {
     const ib = order.indexOf(b.to)
     return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib)
   })
-  // stage-aware label: Applications shows as Colleges/Programs per stage
-  const appsTitle = stageConfig(stage).appsTitle
+  // stage-aware label (Colleges/Programs), further tailored by track (Med Schools)
+  const track = useOs((s) => s.track)
+  const trackCfg = trackApplies(stage) ? trackConfig(track) : null
+  const appsTitle = trackCfg?.appsTitle ?? stageConfig(stage).appsTitle
 
   return (
     <aside className="glass fixed top-4 bottom-4 left-4 z-20 flex w-[60px] flex-col rounded-[18px] px-2 py-4 lg:w-[218px] lg:px-3">
@@ -49,10 +49,9 @@ export function Sidebar() {
         <span className="flex items-center gap-2">
           <StatusDot state={health?.backend ?? 'ok'} live={running > 0} />
           <span className="hidden font-mono text-[11px] tracking-[0.08em] text-mid uppercase lg:inline">
-            {running > 0 ? `${running} running` : 'all quiet'}
+            {running > 0 ? `${running} working` : 'all quiet'}
           </span>
         </span>
-        <span className="hidden font-mono text-[10px] text-low lg:inline">{apiMode}</span>
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5">
@@ -85,6 +84,19 @@ export function Sidebar() {
           )
         })}
       </nav>
+
+      <NavLink
+        to="/settings"
+        title="Settings"
+        className={({ isActive }) =>
+          `mb-1 flex items-center justify-center gap-2.5 rounded-[10px] px-0 py-[7px] text-[13px] transition-colors duration-150 lg:justify-start lg:px-2.5 ${
+            isActive ? 'bg-black/6 text-hi' : 'text-mid hover:bg-black/4 hover:text-hi'
+          }`
+        }
+      >
+        <Settings size={15} strokeWidth={1.75} className="shrink-0 opacity-70" />
+        <span className="hidden flex-1 lg:inline">Settings</span>
+      </NavLink>
 
       {stage && (
         <button

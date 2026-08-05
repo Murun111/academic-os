@@ -43,6 +43,7 @@ _READ_SET: frozenset[str] = frozenset({
     "web.search",   # plain-HTTP search — read-only, works without camofox
     "web.fetch",    # plain-HTTP page read
     "academics.upcoming_deadlines",  # merged deadline view; no side effects
+    "academics.student_profile",     # stage/track read; no side effects
     "vault.read",
     "system.audit",  # read-only self-audit; never writes or calls external services
     "consensus.ask",  # multi-model reasoning aid; no side effects (like browser.search)

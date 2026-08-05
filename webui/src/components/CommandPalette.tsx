@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  LayoutGrid, MessageSquare, Bot, ShieldCheck, Brain, Waypoints,
+  LayoutGrid, MessageSquare, Bot, ShieldCheck, Settings as SettingsIcon,
   GraduationCap, BookOpen, CalendarCheck, Files, Sparkles, Play, Check, X as XIcon,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
@@ -59,10 +59,9 @@ export function CommandPalette() {
       { id: 'g-docs', group: 'Go to', label: 'Documents', icon: Files, action: () => navigate('/documents') },
       { id: 'g-routines', group: 'Go to', label: 'Routines', icon: Sparkles, action: () => navigate('/routines') },
       { id: 'g-chat', group: 'Go to', label: 'Chat', icon: MessageSquare, action: () => navigate('/chat') },
-      { id: 'g-agents', group: 'Go to', label: 'Agents', icon: Bot, action: () => navigate('/agents') },
+      { id: 'g-agents', group: 'Go to', label: 'Assistants', icon: Bot, action: () => navigate('/agents') },
       { id: 'g-appr', group: 'Go to', label: 'Approvals', icon: ShieldCheck, action: () => navigate('/approvals') },
-      { id: 'g-mem', group: 'Go to', label: 'Memory', icon: Brain, action: () => navigate('/memory') },
-      { id: 'g-traces', group: 'Go to', label: 'Traces', icon: Waypoints, action: () => navigate('/traces') },
+      { id: 'g-settings', group: 'Go to', label: 'Settings', icon: SettingsIcon, action: () => navigate('/settings') },
     ]
     const run: Cmd[] = agents.map((a) => ({
       id: `run-${a.name}`, group: 'Run agent', label: a.name, hint: a.state,

@@ -5,7 +5,10 @@ import { NO_MOTION } from '../lib/motion'
 import { ArrowUpRight, Play } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { stageConfig } from '../lib/stageConfig'
+import { trackApplies, trackConfig, daysToTest } from '../lib/trackConfig'
 import { applicationsApi, APPLICATION_STATUSES, type Application } from '../lib/applicationsApi'
+import { coursesApi } from '../lib/coursesApi'
+import { GettingStarted } from '../components/GettingStarted'
 import { study, kindTone, isOverdue, isToday, type AgendaItem } from '../lib/studyApi'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill, ServiceRow, StatusDot, timeAgo } from '../components/ui'
 import { GuidePanel } from '../components/GuidePanel'
@@ -34,16 +37,24 @@ function daysUntil(deadline: string): number {
 }
 
 export function Dashboard() {
-  const { agents, events, approvals, health, runAgent, stage } = useOs()
+  const { agents, events, approvals, health, runAgent, stage, userName, track, testDate } = useOs()
+  const trackCfg = trackApplies(stage) ? trackConfig(track) : null
+  const examDays = daysToTest(testDate)
   const cfg = stageConfig(stage)
   const [deadlines, setDeadlines] = useState<Application[]>([])
   const [pipeline, setPipeline] = useState<Application[]>([])
   const [agenda, setAgenda] = useState<AgendaItem[]>([])
+  const [coursesCount, setCoursesCount] = useState(0)
+  const [onboardLoaded, setOnboardLoaded] = useState(false)
 
   useEffect(() => {
     void applicationsApi.deadlines(45).then(setDeadlines)
-    void applicationsApi.list().then(setPipeline)
     void study.agenda(7).then((a) => setAgenda(a.items))
+    void Promise.all([applicationsApi.list(), coursesApi.listCourses()]).then(([apps, c]) => {
+      setPipeline(apps)
+      setCoursesCount(c.count)
+      setOnboardLoaded(true)
+    })
   }, [])
 
   const hour = new Date().getHours()
@@ -58,19 +69,36 @@ export function Dashboard() {
           <p className="label-mono mb-1">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
-          <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Good {daypart}.</h1>
+          <h1 className="text-[24px] font-semibold tracking-[-0.01em]">
+            Good {daypart}{userName ? `, ${userName.split(' ')[0]}` : ''}.
+          </h1>
         </div>
-        {approvals.length > 0 && (
-          <Link
-            to="/approvals"
-            className="flex items-center gap-2 rounded-lg border border-pend/25 bg-pend/8 px-3 py-1.5 text-[13px] text-pend transition-colors hover:bg-pend/14"
-          >
-            <StatusDot state="pending" live />
-            {approvals.length} waiting on you
-            <ArrowUpRight size={13} />
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {trackCfg?.exam && examDays != null && (
+            <Link
+              to="/settings"
+              title="Exam date — change in Settings"
+              className={`rounded-lg border px-3 py-1.5 font-mono text-[12px] ${
+                examDays <= 14 ? 'border-fail/25 text-fail' : 'border-line text-mid'
+              }`}
+            >
+              {trackCfg.exam} in {examDays}d
+            </Link>
+          )}
+          {approvals.length > 0 && (
+            <Link
+              to="/approvals"
+              className="flex items-center gap-2 rounded-lg border border-pend/25 bg-pend/8 px-3 py-1.5 text-[13px] text-pend transition-colors hover:bg-pend/14"
+            >
+              <StatusDot state="pending" live />
+              {approvals.length} waiting on you
+              <ArrowUpRight size={13} />
+            </Link>
+          )}
+        </div>
       </div>
+
+      <GettingStarted appsCount={pipeline.length} coursesCount={coursesCount} loaded={onboardLoaded} />
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
         {/* ---------------- left column ---------------- */}
@@ -176,7 +204,7 @@ export function Dashboard() {
               <PanelHead label="services" />
               <div className="px-5 pb-3">
                 <ServiceRow name="app server" state={health?.backend ?? 'ok'} />
-                <ServiceRow name="local ai (ollama)" state={health?.ollama ?? 'ok'} />
+                <ServiceRow name="local ai" state={health?.ollama ?? 'ok'} />
               </div>
             </Panel>
           </motion.div>

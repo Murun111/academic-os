@@ -36,6 +36,16 @@ async def upcoming_deadlines(days: int = 14) -> dict:
     return deadline_digest(days=days)
 
 
+async def student_profile() -> dict:
+    """Read-only stage/track profile so agents can tailor searches.
+
+    Deliberately excludes the student's name — agents don't need it.
+    """
+    from backend.routers.profile import get_profile
+    p = get_profile()
+    return {"stage": p.get("stage"), "track": p.get("track"), "test_date": p.get("test_date", "")}
+
+
 async def add_application(
     name: str,
     type: str = "scholarship",

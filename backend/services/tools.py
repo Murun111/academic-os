@@ -101,6 +101,12 @@ async def academics_upcoming_deadlines(days: int = 14) -> dict:
     return await upcoming_deadlines(days=days)
 
 
+async def academics_student_profile() -> dict:
+    """Stage/track/exam-date for tailoring searches (never the student's name)."""
+    from backend.services.academics_tools import student_profile
+    return await student_profile()
+
+
 async def academics_add_application(name: str, type: str = "scholarship",
                                     deadline: str | None = None, org: str = "",
                                     url: str = "", notes: str = "") -> dict:
@@ -236,6 +242,15 @@ def build_tools(
             "properties": {"days": {"type": "integer", "description": "window in days (default 14, max 90)"}},
         },
         handler=lambda days=14: academics_upcoming_deadlines(days=days),
+    ))
+    tools.append(ToolSpec(
+        name="academics.student_profile",
+        description=(
+            "The student's stage (highschool/undergrad/gapyear/grad/beyond), post-undergrad "
+            "track (premed/prelaw/predental/gradschool), and exam date. Use to tailor searches."
+        ),
+        parameters={"type": "object", "properties": {}},
+        handler=lambda: academics_student_profile(),
     ))
     tools.append(ToolSpec(
         name="academics.add_application",

@@ -8,7 +8,7 @@ export function Approvals() {
   return (
     <div className="mx-auto max-w-[820px]">
       <div className="mb-6">
-        <p className="label-mono mb-1">human gate · idempotent on approve</p>
+        <p className="label-mono mb-1">nothing happens without your ok</p>
         <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Approvals</h1>
       </div>
 

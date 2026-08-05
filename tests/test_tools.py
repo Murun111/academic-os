@@ -62,6 +62,7 @@ def test_build_tools_full_set():
         "web.search",
         "web.fetch",
         "academics.upcoming_deadlines",
+        "academics.student_profile",
         "academics.add_application",
         "calendar.list_events",
         "inbox.list_open",

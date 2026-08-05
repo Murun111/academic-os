@@ -12,12 +12,12 @@ export const GUIDANCE: Record<string, GuidanceEntry> = {
   lor: {
     title: 'Letters of recommendation (LOR)',
     body: "A recommendation letter is written by a teacher, professor, employer, or supervisor who can speak to your work and character. Give your recommender at least a few weeks' notice, and share your resume and what you're applying for so the letter is specific rather than generic. Most portals let you waive your right to read the letter — waiving is generally seen as a sign of trust by admissions committees.",
-    stages: ['highschool', 'undergrad', 'grad', 'beyond'],
+    stages: ['highschool', 'undergrad', 'grad', 'gapyear', 'beyond'],
   },
   sop: {
     title: 'Statement of purpose (SOP)',
     body: "A statement of purpose is a graduate-application essay explaining your research interests, relevant background, and why a specific program fits your goals. Unlike a personal statement, it stays focused on academic and professional fit rather than personal narrative. Tailor it to each program — naming faculty or labs you'd want to work with is a common expectation.",
-    stages: ['grad', 'beyond'],
+    stages: ['grad', 'gapyear', 'beyond'],
   },
   'personal-statement': {
     title: 'Personal statement',
@@ -62,7 +62,7 @@ export const GUIDANCE: Record<string, GuidanceEntry> = {
   transcript: {
     title: 'Transcript',
     body: "A transcript is the official record of your courses and grades, issued directly by your school's registrar or counseling office. Most applications require an official transcript sent directly by the institution — a copy you upload yourself usually isn't accepted as final. Request transcripts well before deadlines, since school offices can take time to process them, especially during peak season.",
-    stages: ['highschool', 'undergrad', 'grad', 'beyond'],
+    stages: ['highschool', 'undergrad', 'grad', 'gapyear', 'beyond'],
   },
   'weighted-gpa': {
     title: 'Weighted GPA',
@@ -77,32 +77,32 @@ export const GUIDANCE: Record<string, GuidanceEntry> = {
   gre: {
     title: 'GRE',
     body: "The GRE (Graduate Record Examination) is a standardized test some graduate programs use in admissions, though many US programs have dropped or made it optional in recent years. Requirements vary a lot by field — STEM programs are more likely to still require or recommend it than humanities programs. Check each program's current policy directly, since it changes often and generic advice about GRE requirements goes stale fast.",
-    stages: ['grad', 'beyond'],
+    stages: ['grad', 'gapyear', 'beyond'],
   },
   'toefl-ielts': {
     title: 'TOEFL / IELTS',
     body: "TOEFL and IELTS are English proficiency tests required by many US and English-medium programs for applicants whose education wasn't primarily in English. Requirements and accepted minimum scores vary by program, and some schools waive the requirement if you studied in English for a certain number of years. Register early — test dates and score-report processing can take weeks, and scores typically expire after two years.",
-    stages: ['undergrad', 'grad', 'beyond'],
+    stages: ['undergrad', 'grad', 'gapyear', 'beyond'],
   },
   assistantship: {
     title: 'Assistantship',
     body: 'An assistantship is a graduate funding package tied to work — usually a teaching assistantship (TA) or research assistantship (RA) — that typically covers tuition plus a stipend in exchange for a set number of work hours per week. It is distinct from a fellowship, which usually has no work requirement attached. Ask specifically whether an offer includes full tuition remission, since a "funded" offer can still leave a balance.',
-    stages: ['grad'],
+    stages: ['grad', 'gapyear'],
   },
   stipend: {
     title: 'Stipend',
     body: "A stipend is the living-expense payment that comes with an assistantship or fellowship, paid on a regular schedule — often monthly — rather than as a lump sum. It's meant to cover cost of living, not to be extra spending money, so weigh it against the actual cost of living where the program is located. Ask whether it's taxable, since treatment varies and affects what you actually take home.",
-    stages: ['grad', 'beyond'],
+    stages: ['grad', 'gapyear', 'beyond'],
   },
   waitlist: {
     title: 'Waitlist',
     body: "Being waitlisted means you weren't offered admission outright but could still be admitted later if space opens up, often after the school's initial deposit deadline passes. Schools generally don't rank waitlists publicly, and movement off a waitlist is unpredictable from year to year. If you want to stay in the running, follow the school's specific instructions for confirming waitlist interest — a generic 'letter of continued interest' isn't always welcome or required.",
-    stages: ['highschool', 'undergrad', 'grad'],
+    stages: ['highschool', 'undergrad', 'grad', 'gapyear'],
   },
   deferral: {
     title: 'Deferral',
     body: 'A deferral means your application, usually from an early decision or early action round, is pushed into the regular decision pool for reconsideration rather than accepted or denied outright. It is not a rejection, but the regular pool is generally described as more competitive than the early round. Some schools invite a short update letter after a deferral; check whether yours does before sending one unsolicited.',
-    stages: ['highschool', 'grad'],
+    stages: ['highschool', 'grad', 'gapyear'],
   },
   'need-blind': {
     title: 'Need-blind admission',
@@ -117,7 +117,7 @@ export const GUIDANCE: Record<string, GuidanceEntry> = {
   'work-study': {
     title: 'Work-study',
     body: "Federal work-study is a US need-based program that subsidizes part-time campus or approved off-campus jobs for students, listed as part of a financial aid offer. US-centric: being awarded work-study doesn't guarantee a job — you usually still have to find and apply for a work-study-eligible position yourself. It also doesn't pay automatically toward tuition; it's a paycheck for hours worked, so it helps most with ongoing expenses, not the upfront bill.",
-    stages: ['highschool', 'undergrad', 'grad'],
+    stages: ['highschool', 'undergrad', 'grad', 'gapyear'],
   },
 }
 
