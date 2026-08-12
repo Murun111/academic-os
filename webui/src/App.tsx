@@ -7,6 +7,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { StageSetup } from './components/StageSetup'
 import { Tour } from './components/Tour'
 import { Toasts } from './components/Toasts'
+import { DataFormatBanner } from './components/DataFormatBanner'
 import { useOs } from './lib/store'
 import { Dashboard } from './pages/Dashboard'
 import { Chat } from './pages/Chat'
@@ -99,6 +100,7 @@ function Shell() {
 export default function App() {
   return (
     <MotionConfig reducedMotion="user">
+      <DataFormatBanner />
       <HashRouter>
         <Shell />
       </HashRouter>

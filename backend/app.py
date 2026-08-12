@@ -53,6 +53,11 @@ from backend.services import events
 FRONTEND_BUILD = Path(__file__).parent.parent / "webui" / "dist"
 
 
+# Result of backend.services.data_format.ensure_stamp() at startup. Default
+# keeps tests that skip lifespan (e.g. TestClient without `with`) passing.
+DATA_FORMAT_STATE: dict = {"compatible": True}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App startup/shutdown.
@@ -60,6 +65,15 @@ async def lifespan(app: FastAPI):
     On startup: warm the Ollama model so the first user interaction isn't
     a 12-second cold load. On shutdown: close the Ollama HTTP client.
     """
+    from backend.services import data_format
+    from backend.version import APP_VERSION
+
+    global DATA_FORMAT_STATE
+    try:
+        DATA_FORMAT_STATE = data_format.ensure_stamp(APP_VERSION)
+    except Exception as e:
+        print(f"[startup] WARNING: data format stamp failed: {e!r}")
+
     app.state.ollama = OllamaService()
 
     async def _warm_models() -> None:
@@ -167,6 +181,29 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def block_writes_on_newer_data_format(request, call_next):
+    """Refuse mutating /api/* calls when the data on disk was stamped by a
+    newer app version — prevents silently dropping fields it doesn't know
+    about. Reads (GET/HEAD/OPTIONS) and /api/meta are always allowed so the
+    Settings about/update check keeps working."""
+    path = request.url.path
+    if (
+        not DATA_FORMAT_STATE.get("compatible", True)
+        and path.startswith("/api")
+        and path != "/api/meta"
+        and request.method not in ("GET", "HEAD", "OPTIONS")
+    ):
+        return JSONResponse(
+            {
+                "error": "data_format_newer",
+                "detail": "This data was created by a newer version of Academic OS. Update the app.",
+            },
+            status_code=409,
+        )
+    return await call_next(request)
+
+
 # === Academic OS module routers ===================================
 from backend.routers.applications import router as applications_router  # noqa: E402
 from backend.routers.courses import router as courses_router  # noqa: E402
@@ -199,7 +236,7 @@ def health() -> dict[str, Any]:
 def app_meta() -> dict:
     """App version + update repo, for the Settings about/update check."""
     from backend.version import APP_VERSION, UPDATE_REPO
-    return {"version": APP_VERSION, "repo": UPDATE_REPO}
+    return {"version": APP_VERSION, "repo": UPDATE_REPO, "data_format": DATA_FORMAT_STATE}
 
 
 @app.get("/api/health/ready")

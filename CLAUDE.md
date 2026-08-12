@@ -46,6 +46,10 @@ Commands:
 
 **Dev backend has no --reload:** after editing backend code, kill the uvicorn on 7878 and restart it — the old process silently serves stale code (pydantic drops unknown fields, so new profile fields "vanish" on save).
 
+**Data-format stamp:** `data/format.json` written by `data_format.ensure_stamp()` at startup. If `format_version` on disk > `CURRENT_FORMAT`, an app.py middleware 409s every non-GET /api call (except /api/meta) and the webui shows a top banner — protects against older builds silently dropping fields via the defensive `from_dict` pattern. Bump `CURRENT_FORMAT` only when a JSONL schema change is not backward-safe.
+
+**Restore:** `backup.run_restore()` mirrors `<backup>/AcademicOS-Backup/{data,notes,agents}` back over the live root (including deletions) but first snapshots live state to `<root>/pre-restore-snapshots/<ts>/` (3 newest kept). `data/backup.json` always shows as 1 "overwrite" in preview right after a backup (last_backup is stamped after the copy) — cosmetic, known.
+
 **Agent tools:** `web.search`/`web.fetch` are plain-httpx (no camofox) and classified read-only in `autonomy.py`'s `_READ_SET`; `academics.add_application` is deliberately unlisted so the cautious posture gates it → Approvals queue. Approving executes the tool.
 
 **Agent run API:** run reply field is `id` (not `run_id`); the output field is `result`.

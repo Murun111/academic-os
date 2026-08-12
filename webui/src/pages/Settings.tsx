@@ -394,12 +394,39 @@ function UpdateCheck() {
   )
 }
 
+type RestorePreview = {
+  ok: boolean
+  error?: string
+  backup_dir?: string
+  counts?: { add: number; overwrite: number; delete: number }
+  add?: string[]
+  overwrite?: string[]
+  delete?: string[]
+}
+
+function RestoreBucket({ label, paths }: { label: string; paths?: string[] }) {
+  if (!paths || paths.length === 0) return null
+  return (
+    <div className="mt-2">
+      <p className="label-mono">{label}</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {paths.slice(0, 5).map((p) => (
+          <li key={p} className="truncate font-mono text-[11px] text-low">{p}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function BackupPanel() {
   const [path, setPath] = useState('')
   const [last, setLast] = useState<string | null>(null)
   const [autostart, setAutostart] = useState(false)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState<RestorePreview | null>(null)
+  const [restoreBusy, setRestoreBusy] = useState(false)
+  const [restoreNote, setRestoreNote] = useState('')
 
   const refresh = async () => {
     try {
@@ -443,6 +470,31 @@ function BackupPanel() {
     setBusy(false)
   }
 
+  const previewRestore = async () => {
+    setRestoreBusy(true)
+    setRestoreNote('')
+    try {
+      const r = await (await fetch('/api/system/restore/preview')).json()
+      setPreview(r)
+    } catch {
+      setRestoreNote('Could not reach the app backend.')
+    }
+    setRestoreBusy(false)
+  }
+
+  const restoreNow = async () => {
+    setRestoreBusy(true)
+    setRestoreNote('Restoring…')
+    try {
+      const r = await (await fetch('/api/system/restore', { method: 'POST' })).json()
+      setRestoreNote(r.ok ? `Restored ${r.restored} files. Snapshot saved.` : `Restore failed: ${r.error}`)
+      setPreview(null)
+    } catch {
+      setRestoreNote('Restore request failed — check that the app is still running, then preview again.')
+    }
+    setRestoreBusy(false)
+  }
+
   return (
     <Panel className="mt-6">
       <PanelHead
@@ -481,6 +533,38 @@ function BackupPanel() {
         </p>
 
         {note && <p className="mt-2 text-[12.5px] text-mid">{note}</p>}
+
+        <div className="mt-5 border-t border-line pt-4">
+          <p className="label-mono mb-1">restore from backup</p>
+          <p className="mb-2 text-[12px] text-low">
+            Preview what would change before pulling your data back from the backup folder.
+          </p>
+          <Btn onClick={() => void previewRestore()} disabled={restoreBusy}>Preview restore</Btn>
+
+          {preview?.error === 'no_backup_found' && (
+            <p className="mt-2 text-[12.5px] text-mid">No backup found yet — run a backup first.</p>
+          )}
+          {preview?.error && preview.error !== 'no_backup_found' && (
+            <p className="mt-2 text-[12.5px] text-mid">{preview.error}</p>
+          )}
+
+          {preview?.ok && preview.counts && (
+            <div className="mt-3 rounded-lg border border-line bg-raise2 p-3">
+              <p className="text-[12.5px] text-hi">
+                {preview.counts.add} added, {preview.counts.overwrite} overwritten, {preview.counts.delete} removed
+              </p>
+              <RestoreBucket label="add" paths={preview.add} />
+              <RestoreBucket label="overwrite" paths={preview.overwrite} />
+              <RestoreBucket label="delete" paths={preview.delete} />
+              <div className="mt-3 flex items-center gap-2">
+                <Btn kind="primary" onClick={() => void restoreNow()} disabled={restoreBusy}>Restore now</Btn>
+                <span className="text-[12px] text-low">Takes a safety snapshot of current data first.</span>
+              </div>
+            </div>
+          )}
+
+          {restoreNote && <p className="mt-2 text-[12.5px] text-mid">{restoreNote}</p>}
+        </div>
       </div>
     </Panel>
   )

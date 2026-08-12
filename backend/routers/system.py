@@ -32,6 +32,16 @@ def backup_now() -> dict:
     return backup.run_backup()
 
 
+@router.get("/restore/preview")
+def restore_preview() -> dict:
+    return backup.preview_restore()
+
+
+@router.post("/restore")
+def restore_run() -> dict:
+    return backup.run_restore()
+
+
 @router.get("/autostart")
 def autostart_status() -> dict:
     return {"enabled": login_launch.enabled()}
