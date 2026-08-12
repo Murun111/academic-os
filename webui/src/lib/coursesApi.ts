@@ -14,6 +14,8 @@ export interface Course {
   source: string // "" = manual; "canvas" | "ics" = synced
   external_id: string
   canvas_score: number | null
+  credits: number | null
+  archived: boolean
 }
 
 export interface Assignment {
@@ -88,7 +90,7 @@ export const coursesApi = {
   listCourses: () => cget<{ courses: Course[]; count: number }>('', { courses: [], count: 0 }),
   addCourse: (input: NewCourseInput) =>
     cwrite<{ ok: boolean; course: Course }>('', 'POST', input),
-  updateCourse: (id: string, fields: Partial<NewCourseInput>) =>
+  updateCourse: (id: string, fields: Partial<NewCourseInput> & { credits?: number | null; archived?: boolean }) =>
     cwrite<{ ok: boolean; course: Course }>(`/${id}`, 'PATCH', fields),
   deleteCourse: (id: string) => cwrite<{ ok: boolean }>(`/${id}`, 'DELETE'),
 

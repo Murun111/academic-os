@@ -36,6 +36,7 @@ class Application:
     amount: Optional[float] = None  # scholarship/award amount in USD
     app_fee: Optional[float] = None  # application fee in USD
     fee_waived: bool = False
+    archived: bool = False  # finished/abandoned — hidden from the board, kept for export
     created_at: str = ""
     updated_at: str = ""
 
@@ -222,6 +223,8 @@ class ApplicationsService:
                     it.app_fee = self._validate_amount(fields["app_fee"], "app_fee")
                 if fields.get("fee_waived") is not None:
                     it.fee_waived = bool(fields["fee_waived"])
+                if fields.get("archived") is not None:
+                    it.archived = bool(fields["archived"])
                 it.updated_at = self._now_iso()
                 self._write_all(items)
                 return it
@@ -292,7 +295,7 @@ class ApplicationsService:
         for i in items:
             if not i.deadline:
                 continue
-            if i.status == "decision":
+            if i.status == "decision" or i.archived:
                 continue
             try:
                 d = date.fromisoformat(i.deadline)

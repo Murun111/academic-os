@@ -30,6 +30,8 @@ class Course:
     source: str = ""       # "" = manual; "canvas" = synced from Canvas
     external_id: str = ""  # stable id from the source so re-syncs upsert
     canvas_score: Optional[float] = None  # Canvas's own course total (%), synced
+    credits: Optional[float] = None  # credit hours, for GPA weighting
+    archived: bool = False  # past-term course — hidden from the page and due-soon
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -176,6 +178,10 @@ class CoursesService:
                     c.term = term
                 if "instructor" in fields and fields["instructor"] is not None:
                     c.instructor = fields["instructor"]
+                if "credits" in fields:
+                    c.credits = fields["credits"]
+                if "archived" in fields and fields["archived"] is not None:
+                    c.archived = bool(fields["archived"])
                 self._write_courses(courses)
                 return c
         raise KeyError(course_id)
@@ -272,9 +278,12 @@ class CoursesService:
     def due_soon(self, days: int = 14) -> list[Assignment]:
         today = date.today()
         horizon = today + timedelta(days=days)
+        archived_ids = {c.id for c in self._read_courses() if c.archived}
         items = []
         for a in self._read_assignments():
             if a.status != "todo" or not a.due:
+                continue
+            if a.course_id in archived_ids:
                 continue
             d = date.fromisoformat(a.due)
             if today <= d <= horizon:

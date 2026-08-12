@@ -53,13 +53,15 @@ export function Calendar() {
       applicationsApi.list(),
       coursesApi.listAssignments(),
       study.tasks(),
-    ]).then(([apps, assignments, tasks]) => {
+      coursesApi.listCourses(),
+    ]).then(([apps, assignments, tasks, courseList]) => {
+      const archivedCourses = new Set(courseList.courses.filter((c) => c.archived).map((c) => c.id))
       const all: CalItem[] = []
       for (const a of apps as Application[]) {
-        if (a.deadline) all.push({ date: a.deadline, kind: 'application', title: a.name, to: '/applications' })
+        if (a.deadline && !a.archived) all.push({ date: a.deadline, kind: 'application', title: a.name, to: '/applications' })
       }
       for (const x of assignments.assignments) {
-        if (x.due) all.push({ date: x.due, kind: 'assignment', title: x.title, done: x.status === 'done', to: '/courses' })
+        if (x.due && !archivedCourses.has(x.course_id)) all.push({ date: x.due, kind: 'assignment', title: x.title, done: x.status === 'done', to: '/courses' })
       }
       for (const t of tasks as Task[]) {
         if (t.day) all.push({ date: t.day, kind: 'task', title: t.title, done: t.done, to: '/study' })

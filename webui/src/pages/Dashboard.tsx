@@ -51,8 +51,8 @@ export function Dashboard() {
     void applicationsApi.deadlines(45).then(setDeadlines)
     void study.agenda(7).then((a) => setAgenda(a.items))
     void Promise.all([applicationsApi.list(), coursesApi.listCourses()]).then(([apps, c]) => {
-      setPipeline(apps)
-      setCoursesCount(c.count)
+      setPipeline(apps.filter((a) => !a.archived))
+      setCoursesCount(c.courses.filter((x) => !x.archived).length)
       setOnboardLoaded(true)
     })
   }, [])

@@ -50,6 +50,10 @@ Commands:
 
 **Restore:** `backup.run_restore()` mirrors `<backup>/AcademicOS-Backup/{data,notes,agents}` back over the live root (including deletions) but first snapshots live state to `<root>/pre-restore-snapshots/<ts>/` (3 newest kept). `data/backup.json` always shows as 1 "overwrite" in preview right after a backup (last_backup is stamped after the copy) — cosmetic, known.
 
+**Archive, not delete:** `archived: bool` on Application and Course. Backend aggregations (`upcoming_deadlines`, `due_soon`) skip archived; `list` endpoints return everything and the frontend filters (Applications tab strip, Courses archived section, Dashboard, Calendar). Export intentionally includes archived.
+
+**GPA:** pure frontend math in `webui/src/lib/gpa.ts` (letter scale, credit-weighted term GPA, `neededOnFinal`). `Course.credits` is optional — blank counts as `DEFAULT_CREDITS` (3). No GPA endpoint on the backend.
+
 **Agent tools:** `web.search`/`web.fetch` are plain-httpx (no camofox) and classified read-only in `autonomy.py`'s `_READ_SET`; `academics.add_application` is deliberately unlisted so the cautious posture gates it → Approvals queue. Approving executes the tool.
 
 **Agent run API:** run reply field is `id` (not `run_id`); the output field is `result`.

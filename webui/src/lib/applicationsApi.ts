@@ -36,6 +36,7 @@ export interface Application {
   amount: number | null
   app_fee: number | null
   fee_waived: boolean
+  archived: boolean
   created_at: string
   updated_at: string
 }
@@ -64,6 +65,7 @@ export interface ApplicationUpdateInput {
   amount?: number | null
   app_fee?: number | null
   fee_waived?: boolean
+  archived?: boolean
 }
 
 export interface ApplicationCosts {

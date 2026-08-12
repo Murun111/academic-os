@@ -40,6 +40,8 @@ class CourseUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
     term: Optional[str] = Field(None, min_length=1)
     instructor: Optional[str] = None
+    credits: Optional[float] = Field(None, ge=0, le=30)
+    archived: Optional[bool] = None
 
 
 class AssignmentCreate(BaseModel):

@@ -72,6 +72,7 @@ class ApplicationUpdate(BaseModel):
     amount: Optional[float] = Field(default=None, ge=0)
     app_fee: Optional[float] = Field(default=None, ge=0)
     fee_waived: Optional[bool] = None
+    archived: Optional[bool] = None
 
 
 class RequirementCreate(BaseModel):

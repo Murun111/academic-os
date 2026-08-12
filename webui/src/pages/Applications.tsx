@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Calendar, Check, Landmark, Plus, Search, Trash2, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, ArrowRight, Calendar, Check, Landmark, Plus, Search, Trash2, X } from 'lucide-react'
 import { scoutApi } from '../lib/scoutApi'
 import {
   applicationsApi, APPLICATION_STATUSES, APPLICATION_TYPES, requirementsProgress,
@@ -215,10 +215,18 @@ export function Applications() {
   const selectedItem = items.find((i) => i.id === selected) ?? null
 
   // type filter tabs — split colleges from scholarships without two pages
-  const [typeFilter, setTypeFilter] = useState<ApplicationType | 'all'>('all')
-  const presentTypes = APPLICATION_TYPES.filter((t) => items.some((i) => i.type === t))
-  const visible = typeFilter === 'all' ? items : items.filter((i) => i.type === typeFilter)
-  const visibleDeadlines = typeFilter === 'all' ? deadlines : deadlines.filter((d) => d.type === typeFilter)
+  const [typeFilter, setTypeFilter] = useState<ApplicationType | 'all' | 'archived'>('all')
+  const activeItems = items.filter((i) => !i.archived)
+  const archivedItems = items.filter((i) => i.archived)
+  const presentTypes = APPLICATION_TYPES.filter((t) => activeItems.some((i) => i.type === t))
+  const visible =
+    typeFilter === 'archived' ? archivedItems
+    : typeFilter === 'all' ? activeItems
+    : activeItems.filter((i) => i.type === typeFilter)
+  const visibleDeadlines =
+    typeFilter === 'archived' ? []
+    : typeFilter === 'all' ? deadlines
+    : deadlines.filter((d) => d.type === typeFilter)
   const columns = APPLICATION_STATUSES.map((status) => ({ status, items: visible.filter((i) => i.status === status) }))
 
   // sync drafts whenever the drawer selection changes
@@ -550,10 +558,17 @@ export function Applications() {
         )}
       </AnimatePresence>
 
-      {presentTypes.length > 1 && (
+      {(presentTypes.length > 1 || archivedItems.length > 0) && (
         <div className="mb-4 flex flex-wrap items-center gap-1.5">
-          {(['all', ...presentTypes] as const).map((t) => {
-            const n = t === 'all' ? items.length : items.filter((i) => i.type === t).length
+          {([
+            'all',
+            ...presentTypes,
+            ...(archivedItems.length > 0 ? (['archived'] as const) : []),
+          ] as const).map((t) => {
+            const n =
+              t === 'all' ? activeItems.length
+              : t === 'archived' ? archivedItems.length
+              : activeItems.filter((i) => i.type === t).length
             return (
               <button
                 key={t}
@@ -564,7 +579,7 @@ export function Applications() {
                     : 'border-line text-mid hover:border-ink/15 hover:text-hi'
                 }`}
               >
-                {t === 'all' ? 'Everything' : TYPE_LABEL[t]}
+                {t === 'all' ? 'Everything' : t === 'archived' ? 'Archived' : TYPE_LABEL[t]}
                 <span className="ml-1.5 font-mono text-[11px] text-low">{n}</span>
               </button>
             )
@@ -851,9 +866,23 @@ export function Applications() {
               </a>
             )}
 
-            <Btn kind="danger" className="mt-auto" onClick={() => void removeApplication()}>
-              <span className="flex items-center gap-1.5"><Trash2 size={13} /> Delete</span>
-            </Btn>
+            <div className="mt-auto flex items-center gap-2">
+              <Btn
+                onClick={() => {
+                  void patch({ archived: !selectedItem.archived })
+                  setSelected(null)
+                }}
+              >
+                <span className="flex items-center gap-1.5">
+                  {selectedItem.archived
+                    ? <><ArchiveRestore size={13} /> Restore</>
+                    : <><Archive size={13} /> Archive</>}
+                </span>
+              </Btn>
+              <Btn kind="danger" onClick={() => void removeApplication()}>
+                <span className="flex items-center gap-1.5"><Trash2 size={13} /> Delete</span>
+              </Btn>
+            </div>
           </motion.aside>
         )}
       </AnimatePresence>

@@ -1,14 +1,83 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react'
 import {
   coursesApi, gradeTone,
   type Assignment, type AssignmentStatus, type CourseSummary,
 } from '../lib/coursesApi'
+import { DEFAULT_CREDITS, neededOnFinal, termGpa, toLetter } from '../lib/gpa'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
 
 function fmtGrade(grade: number | null): string {
   return grade == null ? '—' : `${grade.toFixed(1)}%`
+}
+
+function GpaPanel({ courses }: { courses: CourseSummary[] }) {
+  const { gpa, graded } = termGpa(courses)
+  if (gpa == null) return null
+  const hasBlankCredits = courses.some((c) => c.grade != null && c.credits == null)
+  return (
+    <Panel className="mb-6">
+      <PanelHead label="term gpa" />
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 pb-4">
+        <span className="text-[32px] font-semibold tracking-[-0.02em] text-hi">{gpa.toFixed(2)}</span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {courses.filter((c) => c.grade != null).map((c) => {
+            const gp = toLetter(c.grade as number)
+            return (
+              <span key={c.id} className="text-[12.5px] text-mid">
+                {c.name} <Mono className="text-low">{gp.letter} · {gp.points.toFixed(1)}</Mono>
+              </span>
+            )
+          })}
+        </div>
+      </div>
+      <p className="px-5 pb-3 text-[11.5px] text-low">
+        {graded} of {courses.length} courses graded, weighted by credit hours
+        {hasBlankCredits ? ` (blank credits count as ${DEFAULT_CREDITS})` : ''}.
+      </p>
+    </Panel>
+  )
+}
+
+function WhatIf({ current }: { current: number }) {
+  const [worth, setWorth] = useState('')
+  const [target, setTarget] = useState('')
+  const w = Number(worth)
+  const t = Number(target)
+  const valid = worth.trim() !== '' && target.trim() !== '' && !Number.isNaN(w) && !Number.isNaN(t)
+  const needed = valid ? neededOnFinal(current, w, t) : null
+
+  let verdict = ''
+  if (valid && needed != null) {
+    if (needed <= 0) verdict = `Already secured — even a 0 on the final keeps ${t}%.`
+    else if (needed > 100) verdict = `Not reachable with the final alone (needs ${needed.toFixed(1)}%).`
+    else verdict = `Need ${needed.toFixed(1)}% on the final.`
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-line bg-raise2 px-3 py-2.5">
+      <p className="label-mono mb-1.5">what do i need on the final?</p>
+      <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-mid">
+        <span>Final is worth</span>
+        <input
+          value={worth}
+          onChange={(e) => setWorth(e.target.value)}
+          placeholder="30"
+          className="w-[48px] rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
+        />
+        <span>% of the grade, and I want</span>
+        <input
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          placeholder="90"
+          className="w-[48px] rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
+        />
+        <span>% overall.</span>
+      </div>
+      {verdict && <p className="mt-1.5 text-[12.5px] text-hi">{verdict}</p>}
+    </div>
+  )
 }
 
 function AddCourseForm({ onAdd, onCancel }: { onAdd: (name: string, term: string, instructor: string) => void; onCancel: () => void }) {
@@ -202,6 +271,23 @@ export function Courses() {
 
   const courseNameById = (id: string) => courses.find((c) => c.id === id)?.name
 
+  const setArchived = async (courseId: string, archived: boolean) => {
+    await coursesApi.updateCourse(courseId, { archived })
+    if (archived && expanded === courseId) { setExpanded(null); setAssignments([]) }
+    void load()
+  }
+
+  const commitCredits = async (courseId: string, raw: string) => {
+    const trimmed = raw.trim()
+    const parsed = trimmed === '' ? null : Number(trimmed)
+    const credits = parsed === null || Number.isNaN(parsed) ? null : parsed
+    await coursesApi.updateCourse(courseId, { credits })
+    void load()
+  }
+
+  const active = courses.filter((c) => !c.archived)
+  const archived = courses.filter((c) => c.archived)
+
   return (
     <div className="mx-auto max-w-[1200px]">
       <div className="mb-6 flex items-end justify-between">
@@ -213,6 +299,8 @@ export function Courses() {
           <span className="flex items-center gap-1.5"><Plus size={13} /> Add course</span>
         </Btn>
       </div>
+
+      <GpaPanel courses={active} />
 
       {/* due soon strip */}
       <Panel className="mb-6">
@@ -238,12 +326,12 @@ export function Courses() {
       )}
 
       {loading && <EmptyState title="Loading courses…" />}
-      {!loading && courses.length === 0 && !showAddCourse && (
+      {!loading && active.length === 0 && !showAddCourse && (
         <EmptyState title="No courses yet." hint="Add your first course above." />
       )}
 
       <div className="flex flex-col gap-2">
-        {courses.map((c) => (
+        {active.map((c) => (
             <div key={c.id} className="panel overflow-hidden">
               <button
                 onClick={() => toggleExpand(c.id)}
@@ -266,7 +354,25 @@ export function Courses() {
 
               {expanded === c.id && (
                 <div className="border-t border-hairline px-4 py-3">
-                  <div className="flex flex-col gap-px">
+                  <div className="mb-2 flex flex-wrap items-center gap-3 text-[12.5px] text-mid">
+                    <label className="flex items-center gap-1.5">
+                      credit hours
+                      <input
+                        defaultValue={c.credits == null ? '' : String(c.credits)}
+                        onBlur={(e) => { if (e.target.value.trim() !== (c.credits == null ? '' : String(c.credits))) void commitCredits(c.id, e.target.value) }}
+                        placeholder={String(DEFAULT_CREDITS)}
+                        className="w-[48px] rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
+                      />
+                    </label>
+                    <button
+                      onClick={() => void setArchived(c.id, true)}
+                      className="flex items-center gap-1.5 text-low transition-colors duration-150 hover:text-mid"
+                    >
+                      <Archive size={12} /> Archive course
+                    </button>
+                  </div>
+                  {c.grade != null && <WhatIf current={c.grade} />}
+                  <div className="mt-3 flex flex-col gap-px">
                     {assignments.length === 0 && addingAssignmentFor !== c.id && (
                       <EmptyState title="No assignments yet." />
                     )}
@@ -295,6 +401,29 @@ export function Courses() {
             </div>
           ))}
         </div>
+
+      {archived.length > 0 && (
+        <div className="mt-6">
+          <p className="label-mono mb-2">archived · {archived.length}</p>
+          <div className="flex flex-col gap-2">
+            {archived.map((c) => (
+              <div key={c.id} className="panel flex items-center gap-3 px-4 py-2.5 opacity-70">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13.5px] text-mid">{c.name}</p>
+                  <Mono className="text-low">{c.term}</Mono>
+                </div>
+                <Pill tone={gradeTone(c.grade)}>{fmtGrade(c.grade)}</Pill>
+                <button
+                  onClick={() => void setArchived(c.id, false)}
+                  className="flex shrink-0 items-center gap-1.5 text-[12px] text-low transition-colors duration-150 hover:text-mid"
+                >
+                  <ArchiveRestore size={12} /> Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <p className="mt-6 border-t border-hairline pt-4 text-[12.5px] text-low">
         Connect Canvas or a school calendar link in{' '}

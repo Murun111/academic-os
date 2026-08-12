@@ -92,3 +92,4 @@ build/
 dist/
 *.spec
 vendor/
+delivery/
