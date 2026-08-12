@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Check, CalendarPlus, Monitor, Moon, Sun, Trash2 } from 'lucide-react'
 import { Btn, Mono, Panel, PanelHead } from '../components/ui'
 import { LmsSyncPanel } from '../components/LmsSyncPanel'
@@ -241,6 +242,8 @@ export function Settings() {
         <MemoryPanel />
       </div>
 
+      <BackupPanel />
+
       <Panel className="mt-6">
         <PanelHead label="your data" />
         <div className="px-5 pb-5">
@@ -251,8 +254,11 @@ export function Settings() {
           <p className="mt-2 text-[12px] text-low">
             Back it up by copying that folder. Deleting the app never deletes your data.
           </p>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap gap-2">
             <Btn onClick={() => setTour(true)}>Replay the walkthrough</Btn>
+            <Link to="/export">
+              <Btn>Progress report for a counselor (PDF)</Btn>
+            </Link>
           </div>
           <UpdateCheck />
         </div>
@@ -385,5 +391,97 @@ function UpdateCheck() {
         </p>
       )}
     </div>
+  )
+}
+
+function BackupPanel() {
+  const [path, setPath] = useState('')
+  const [last, setLast] = useState<string | null>(null)
+  const [autostart, setAutostart] = useState(false)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const refresh = async () => {
+    try {
+      const b = await (await fetch('/api/system/backup')).json()
+      setPath(b.path)
+      setLast(b.last_backup)
+      const a = await (await fetch('/api/system/autostart')).json()
+      setAutostart(!!a.enabled)
+    } catch { /* backend down — panel stays empty */ }
+  }
+  useEffect(() => { void refresh() }, [])
+
+  const savePath = async (p: string) => {
+    setBusy(true)
+    const r = await (await fetch('/api/system/backup/config', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: p }),
+    })).json()
+    setNote(r.error ? `Could not use that folder: ${r.error}` : p ? 'Backup folder set.' : 'Backup off.')
+    await refresh()
+    setBusy(false)
+  }
+
+  const backupNow = async () => {
+    setBusy(true)
+    setNote('Backing up…')
+    const r = await (await fetch('/api/system/backup/now', { method: 'POST' })).json()
+    setNote(r.ok ? `Backed up to ${r.dest}` : `Backup failed: ${r.error}`)
+    await refresh()
+    setBusy(false)
+  }
+
+  const toggleAutostart = async (enabled: boolean) => {
+    setBusy(true)
+    const r = await (await fetch('/api/system/autostart', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })).json()
+    if (r.error) setNote(r.error)
+    await refresh()
+    setBusy(false)
+  }
+
+  return (
+    <Panel className="mt-6">
+      <PanelHead
+        label="backup + always on"
+        right={last ? <Mono className="text-low">last backup {last.slice(0, 16).replace('T', ' ')}</Mono> : undefined}
+      />
+      <div className="px-5 pb-5">
+        <p className="label-mono mb-1">backup folder</p>
+        <p className="mb-2 text-[12px] text-low">
+          Pick any folder that syncs — iCloud Drive, Google Drive, Dropbox. Your data mirrors
+          there every hour, so a lost laptop doesn't mean a lost application season.
+        </p>
+        <div className="flex gap-2">
+          <input
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            onBlur={() => void savePath(path.trim())}
+            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            placeholder="~/Library/Mobile Documents/com~apple~CloudDocs/AcademicOS"
+            className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-1.5 font-mono text-[12px] text-hi outline-none placeholder:text-low focus:border-ink/25"
+          />
+          <Btn onClick={() => void backupNow()} disabled={busy || !path.trim()}>Back up now</Btn>
+        </div>
+
+        <label className="mt-4 flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={autostart}
+            onChange={(e) => void toggleAutostart(e.target.checked)}
+            className="size-3.5 accent-ink/70"
+          />
+          <span className="text-[13px] text-hi">Start Academic OS when you log in</span>
+        </label>
+        <p className="mt-1 text-[12px] text-low">
+          Keeps deadline notifications and Canvas sync working without opening the app yourself.
+        </p>
+
+        {note && <p className="mt-2 text-[12.5px] text-mid">{note}</p>}
+      </div>
+    </Panel>
   )
 }

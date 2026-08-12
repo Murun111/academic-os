@@ -47,6 +47,7 @@ class _UpdateBody(BaseModel):
     status: Optional[DocStatus] = None
     tags: Optional[list[str]] = None
     notes: Optional[str] = None
+    content: Optional[str] = None
 
 
 class _VersionBody(BaseModel):
@@ -99,6 +100,7 @@ def update_document(doc_id: str, body: _UpdateBody) -> dict:
             status=body.status,
             tags=body.tags,
             notes=body.notes,
+            content=body.content,
         )
     except KeyError:
         return JSONResponse({"error": "not_found", "detail": doc_id}, status_code=404)

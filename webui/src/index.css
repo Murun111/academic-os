@@ -182,6 +182,27 @@ body {
   }
 }
 
+/* ---- print: only the report, white paper, full width ---- */
+@media print {
+  aside,
+  [aria-hidden] {
+    display: none !important;
+  }
+  body {
+    overflow: visible !important;
+    background: white !important;
+  }
+  main {
+    position: static !important;
+    overflow: visible !important;
+  }
+  main > div {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+  }
+}
+
 /* quiet scrollbars */
 * {
   scrollbar-width: thin;

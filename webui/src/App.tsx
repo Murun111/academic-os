@@ -19,11 +19,13 @@ import { Agents } from './pages/Agents'
 import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
 import { Calendar } from './pages/Calendar'
+import { Export } from './pages/Export'
 
 const TITLES: Record<string, string> = {
   '/': 'Dashboard', '/applications': 'Applications', '/courses': 'Courses', '/study': 'Study',
   '/calendar': 'Calendar', '/documents': 'Documents', '/routines': 'Routines', '/chat': 'Chat',
   '/agents': 'Assistants', '/approvals': 'Approvals', '/settings': 'Settings',
+  '/export': 'Progress Report',
 }
 
 import { NO_MOTION } from './lib/motion'
@@ -49,6 +51,7 @@ function Shell() {
       <Route path="/agents" element={<Agents />} />
       <Route path="/approvals" element={<Approvals />} />
       <Route path="/settings" element={<Settings />} />
+      <Route path="/export" element={<Export />} />
     </Routes>
   )
 

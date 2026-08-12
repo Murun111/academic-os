@@ -39,6 +39,7 @@ class Document:
     tags: list[str] = field(default_factory=list)
     linked_application_ids: list[str] = field(default_factory=list)
     notes: str = ""
+    content: str = ""  # the essay text itself — the app is the editor, not a filing cabinet
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -185,18 +186,22 @@ class DocumentsService:
                     it.tags = list(fields["tags"])
                 if "notes" in fields and fields["notes"] is not None:
                     it.notes = fields["notes"]
+                if "content" in fields and fields["content"] is not None:
+                    it.content = fields["content"]
                 it.updated_at = self._now_iso()
                 self._write_all(items)
                 return it
         raise KeyError(doc_id)
 
     def bump_version(self, doc_id: str, note: str) -> Document:
+        """Snapshot the current draft text into history and bump the number."""
         items = self._read_all()
         for it in items:
             if it.id == doc_id:
                 it.version += 1
                 now = self._now_iso()
-                it.history.append({"version": it.version, "note": note, "at": now})
+                it.history.append({"version": it.version, "note": note, "at": now,
+                                   "content": it.content})
                 it.updated_at = now
                 self._write_all(items)
                 return it

@@ -27,6 +27,7 @@ export interface Document {
   tags: string[]
   linked_application_ids: string[]
   notes: string
+  content: string
   created_at: string
   updated_at: string
 }
@@ -86,7 +87,7 @@ export const documentsApi = {
   }) => dpost<{ ok: boolean; item: Document }>('', body),
   update: (
     id: string,
-    body: Partial<Pick<Document, 'title' | 'kind' | 'status' | 'tags' | 'notes'>>,
+    body: Partial<Pick<Document, 'title' | 'kind' | 'status' | 'tags' | 'notes' | 'content'>>,
   ) => dpost<{ ok: boolean; item: Document }>(`/${id}`, body, 'PATCH'),
   delete: (id: string) => dpost<{ ok: boolean }>(`/${id}`, undefined, 'DELETE'),
   bumpVersion: (id: string, note: string) =>

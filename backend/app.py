@@ -127,9 +127,13 @@ async def lifespan(app: FastAPI):
     # Canvas auto-sync (every 6h, only when a token is configured).
     from backend.services.canvas_sync import auto_sync_loop
     _canvas_task = asyncio.create_task(auto_sync_loop())
+    # Hourly folder backup (only when a destination is set).
+    from backend.services.backup import backup_loop
+    _backup_task = asyncio.create_task(backup_loop())
     yield
     _reminder_task.cancel()
     _canvas_task.cancel()
+    _backup_task.cancel()
     await app.state.ollama.close()
     app.state.agent_scheduler.stop()
 
@@ -172,7 +176,9 @@ from backend.routers.routines import router as routines_router  # noqa: E402
 from backend.routers.profile import router as profile_router  # noqa: E402
 from backend.routers.connectors import router as connectors_router  # noqa: E402
 from backend.routers.localai import router as localai_router  # noqa: E402
+from backend.routers.system import router as system_router  # noqa: E402
 
+app.include_router(system_router)
 app.include_router(profile_router)
 app.include_router(connectors_router)
 app.include_router(localai_router)

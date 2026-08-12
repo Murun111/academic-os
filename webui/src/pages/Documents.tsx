@@ -7,6 +7,7 @@ import {
   type DocumentKind,
 } from '../lib/documentsApi'
 import { Btn, EmptyState, Mono, Panel, Pill, timeAgo } from '../components/ui'
+import { routinesApi } from '../lib/routinesApi'
 
 const KIND_FILTERS: Array<DocumentKind | 'all'> = ['all', ...DOCUMENT_KINDS]
 
@@ -184,16 +185,40 @@ function DocumentRow({
   const [tagsInput, setTagsInput] = useState(doc.tags.join(', '))
   const [versionNote, setVersionNote] = useState('')
   const [showVersionInput, setShowVersionInput] = useState(false)
+  const [content, setContent] = useState(doc.content)
+  const [contentSaved, setContentSaved] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const [coachBusy, setCoachBusy] = useState(false)
 
   useEffect(() => {
     setNotes(doc.notes)
     setTagsInput(doc.tags.join(', '))
-  }, [doc.id, doc.notes, doc.tags])
+    setContent(doc.content)
+  }, [doc.id, doc.notes, doc.tags, doc.content])
 
   const saveNotes = async () => {
     if (notes === doc.notes) return
     const res = await documentsApi.update(doc.id, { notes })
     if (res?.ok) onChanged(res.item)
+  }
+
+  const saveContent = async () => {
+    if (content === doc.content) return
+    const res = await documentsApi.update(doc.id, { content })
+    if (res?.ok) {
+      onChanged(res.item)
+      setContentSaved(true)
+      setTimeout(() => setContentSaved(false), 1500)
+    }
+  }
+
+  const getFeedback = async () => {
+    if (!content.trim()) return
+    setCoachBusy(true)
+    setFeedback('')
+    const f = await routinesApi.essayFeedback(content, doc.title)
+    setFeedback(f ? f.feedback : 'The essay coach is offline — start the local AI in Settings.')
+    setCoachBusy(false)
   }
 
   const saveTags = async () => {
@@ -233,6 +258,37 @@ function DocumentRow({
 
       {expanded && (
         <div className="border-t border-hairline px-4 py-4">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="label-mono">the essay itself</p>
+            {contentSaved && <Mono className="text-acc">saved</Mono>}
+          </div>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onBlur={() => void saveContent()}
+            placeholder="Write here — drafts save automatically and stay on this computer. Use 'Save version' below to snapshot a draft before big edits."
+            rows={content.trim() ? Math.min(24, Math.max(8, content.split('\n').length + 2)) : 6}
+            className="mb-2 w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2.5 text-[13.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-ink/25"
+          />
+          <div className="mb-4 flex items-center gap-3">
+            <Btn kind="primary" onClick={() => void getFeedback()} disabled={coachBusy || !content.trim()}>
+              {coachBusy ? 'Coach is reading…' : 'Get coach feedback'}
+            </Btn>
+            {content.trim() && (
+              <Mono className="text-low">{content.trim().split(/\s+/).length} words</Mono>
+            )}
+          </div>
+          {feedback && (
+            <div className="mb-4 rounded-[10px] border border-hairline bg-raise2 px-3 py-2.5">
+              <p className="label-mono mb-1.5">essay coach</p>
+              <div className="flex flex-col gap-1.5">
+                {feedback.split('\n').filter((l) => l.trim()).map((l, i) => (
+                  <p key={i} className="text-[12.5px] leading-relaxed text-mid">{l}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
           <p className="label-mono mb-2">history</p>
           {doc.history.length === 0 ? (
             <p className="mb-4 text-[12.5px] text-low">No versions bumped yet.</p>
