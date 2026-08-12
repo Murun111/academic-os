@@ -27,6 +27,10 @@ interface OsStore {
   track: Track | null
   testDate: string
   reminders: boolean
+  tourOpen: boolean
+  setTour: (open: boolean) => void
+  theme: ThemePref
+  setTheme: (theme: ThemePref) => void
   boot: () => void
   setStage: (stage: Stage) => Promise<void>
   setUserName: (name: string) => Promise<void>
@@ -42,6 +46,31 @@ interface OsStore {
 
 const MAX_EVENTS = 200
 let unsubscribe: (() => void) | null = null
+
+const THEME_KEY = 'academicos.theme'
+
+export type ThemePref = 'system' | 'light' | 'dark'
+
+const _mq = window.matchMedia('(prefers-color-scheme: dark)')
+
+function applyTheme(pref: ThemePref) {
+  const resolved = pref === 'system' ? (_mq.matches ? 'dark' : 'light') : pref
+  document.documentElement.dataset.theme = resolved
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', resolved)
+}
+
+function initialTheme(): ThemePref {
+  const saved = localStorage.getItem(THEME_KEY)
+  const pref: ThemePref = saved === 'dark' || saved === 'light' ? saved : 'system'
+  applyTheme(pref)
+  return pref
+}
+
+// follow the OS live: when macOS flips appearance and the pref is "system",
+// restyle immediately — no reload needed
+_mq.addEventListener('change', () => {
+  if ((localStorage.getItem(THEME_KEY) ?? 'system') === 'system') applyTheme('system')
+})
 
 export const useOs = create<OsStore>((set, get) => ({
   agents: [],
@@ -59,6 +88,16 @@ export const useOs = create<OsStore>((set, get) => ({
   track: null,
   testDate: '',
   reminders: true,
+  tourOpen: false,
+  theme: initialTheme(),
+
+  setTour: (tourOpen) => set({ tourOpen }),
+
+  setTheme: (theme) => {
+    localStorage.setItem(THEME_KEY, theme)
+    applyTheme(theme)
+    set({ theme })
+  },
 
   boot: () => {
     if (get().booted) return

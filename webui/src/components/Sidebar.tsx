@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutGrid, MessageSquare, Bot, ShieldCheck, Settings,
-  Command, GraduationCap, BookOpen, CalendarCheck, Files, Sparkles,
+  Command, GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { stageConfig, STAGES } from '../lib/stageConfig'
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/applications', label: 'Applications', icon: GraduationCap },
   { to: '/courses', label: 'Courses', icon: BookOpen },
   { to: '/study', label: 'Study', icon: CalendarCheck },
+  { to: '/calendar', label: 'Calendar', icon: CalendarDays },
   { to: '/documents', label: 'Documents', icon: Files },
   { to: '/routines', label: 'Routines', icon: Sparkles },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
@@ -54,7 +55,7 @@ export function Sidebar() {
         </span>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-0.5">
+      <nav data-tour="nav" className="flex flex-1 flex-col gap-0.5">
         {nav.map(({ to, label: rawLabel, icon: Icon, end }) => {
           const label = to === '/applications' ? appsTitle : rawLabel
           return (
@@ -65,7 +66,7 @@ export function Sidebar() {
             title={label}
             className={({ isActive }) =>
               `group relative flex items-center justify-center gap-2.5 rounded-[10px] px-0 py-[7px] text-[13px] transition-colors duration-150 lg:justify-start lg:px-2.5 ${
-                isActive ? 'bg-black/6 text-hi' : 'text-mid hover:bg-black/4 hover:text-hi'
+                isActive ? 'bg-ink/6 text-hi' : 'text-mid hover:bg-ink/4 hover:text-hi'
               }`
             }
           >
@@ -90,7 +91,7 @@ export function Sidebar() {
         title="Settings"
         className={({ isActive }) =>
           `mb-1 flex items-center justify-center gap-2.5 rounded-[10px] px-0 py-[7px] text-[13px] transition-colors duration-150 lg:justify-start lg:px-2.5 ${
-            isActive ? 'bg-black/6 text-hi' : 'text-mid hover:bg-black/4 hover:text-hi'
+            isActive ? 'bg-ink/6 text-hi' : 'text-mid hover:bg-ink/4 hover:text-hi'
           }`
         }
       >
@@ -100,9 +101,10 @@ export function Sidebar() {
 
       {stage && (
         <button
+          data-tour="stage-pill"
           onClick={() => openStagePicker(true)}
           title="Change stage"
-          className="mb-1 flex items-center justify-center rounded-[10px] px-0 py-1.5 font-mono text-[10.5px] tracking-[0.08em] text-low uppercase transition-colors duration-150 hover:bg-black/4 hover:text-mid lg:justify-start lg:px-2.5"
+          className="mb-1 flex items-center justify-center rounded-[10px] px-0 py-1.5 font-mono text-[10.5px] tracking-[0.08em] text-low uppercase transition-colors duration-150 hover:bg-ink/4 hover:text-mid lg:justify-start lg:px-2.5"
         >
           {STAGES[stage].label}
         </button>
@@ -111,7 +113,7 @@ export function Sidebar() {
       <button
         onClick={() => setPalette(true)}
         title="Command palette (⌘K)"
-        className="mt-3 flex items-center justify-center rounded-[10px] border border-line px-0 py-2 text-[12.5px] text-low transition-colors duration-150 hover:border-black/15 hover:text-mid lg:justify-between lg:px-2.5"
+        className="mt-3 flex items-center justify-center rounded-[10px] border border-line px-0 py-2 text-[12.5px] text-low transition-colors duration-150 hover:border-ink/15 hover:text-mid lg:justify-between lg:px-2.5"
       >
         <span className="flex items-center gap-2">
           <Command size={13} strokeWidth={1.75} />

@@ -124,8 +124,12 @@ async def lifespan(app: FastAPI):
     # Daily deadline reminder (native macOS notification, one per day).
     from backend.services.deadline_reminders import reminder_loop
     _reminder_task = asyncio.create_task(reminder_loop())
+    # Canvas auto-sync (every 6h, only when a token is configured).
+    from backend.services.canvas_sync import auto_sync_loop
+    _canvas_task = asyncio.create_task(auto_sync_loop())
     yield
     _reminder_task.cancel()
+    _canvas_task.cancel()
     await app.state.ollama.close()
     app.state.agent_scheduler.stop()
 
@@ -183,6 +187,13 @@ app.include_router(routines_router)
 def health() -> dict[str, Any]:
     """Liveness check. Returns ok always; /health/ready checks dependencies."""
     return {"status": "ok"}
+
+
+@app.get("/api/meta")
+def app_meta() -> dict:
+    """App version + update repo, for the Settings about/update check."""
+    from backend.version import APP_VERSION, UPDATE_REPO
+    return {"version": APP_VERSION, "repo": UPDATE_REPO}
 
 
 @app.get("/api/health/ready")
@@ -522,6 +533,48 @@ async def memory_context(q: str = "", k: int = 6) -> dict:
     """Preview the memory context block that would be injected for a query."""
     from backend.services.memory_recall import recall
     return {"query": q, "context": recall(q, k)}
+
+
+@app.get("/api/memory/items")
+def memory_items() -> dict:
+    """Everything the app remembers, newest first (Settings privacy view)."""
+    from backend.services import memory_index
+    try:
+        memory_index.init_db()
+        items = memory_index.all_items()
+    except Exception as e:  # read-only view — never 500
+        return {"items": [], "count": 0, "error": str(e)}
+    items.sort(key=lambda i: i.ts or "", reverse=True)
+    return {
+        "items": [
+            {"item_id": i.item_id, "kind": i.kind, "subject": i.subject,
+             "body": i.body, "ts": i.ts}
+            for i in items
+        ],
+        "count": len(items),
+    }
+
+
+@app.delete("/api/memory/items/{item_id}")
+def memory_item_delete(item_id: str) -> JSONResponse:
+    """Forget one memory — removed from the index, recall stops immediately."""
+    from backend.services import memory_index
+    if memory_index.delete_item(item_id):
+        return JSONResponse({"ok": True, "item_id": item_id})
+    return JSONResponse({"error": "not_found", "item_id": item_id}, status_code=404)
+
+
+@app.post("/api/memory/forget_all")
+def memory_forget_all() -> dict:
+    """Forget everything: wipe the index AND the memory markdown notes."""
+    import shutil
+    from backend.services import memory_index
+    from backend.vault import resolve_vault_path
+    n = memory_index.delete_all()
+    notes_dir = resolve_vault_path() / "notes" / "memory"
+    if notes_dir.exists():
+        shutil.rmtree(notes_dir, ignore_errors=True)
+    return {"ok": True, "forgotten": n}
 
 
 @app.get("/api/memory/stats")

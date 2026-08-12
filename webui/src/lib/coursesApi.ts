@@ -11,6 +11,9 @@ export interface Course {
   term: string
   instructor: string
   created_at: string
+  source: string // "" = manual; "canvas" | "ics" = synced
+  external_id: string
+  canvas_score: number | null
 }
 
 export interface Assignment {

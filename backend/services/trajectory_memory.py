@@ -25,7 +25,16 @@ from typing import Any, Optional
 
 from backend.services.memory_index import _cosine, embed
 
-DB_PATH: Path = Path.home() / ".agentic-os" / "memory" / "trajectories.db"
+# Test override: set to a Path to pin the DB location. When None (normal
+# operation) the DB lives inside the app data root — never a foreign dir.
+DB_PATH: Optional[Path] = None
+
+
+def _default_db_path() -> Path:
+    if DB_PATH is not None:
+        return Path(DB_PATH)
+    from backend.vault import agentic_os_dir
+    return agentic_os_dir() / "data" / "memory" / "trajectories.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trajectories (
@@ -72,7 +81,7 @@ class TrajectoryStore:
     """SQLite store of critic-passed run trajectories with embeddings."""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = Path(db_path) if db_path else DB_PATH
+        self.db_path = Path(db_path) if db_path else _default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript(_SCHEMA)

@@ -70,8 +70,8 @@ export function Btn({
   disabled?: boolean; className?: string
 }) {
   const styles = {
-    quiet: 'text-mid hover:text-hi hover:bg-black/5',
-    primary: 'bg-black/8 text-hi hover:bg-black/12',
+    quiet: 'text-mid hover:text-hi hover:bg-ink/5',
+    primary: 'bg-ink/8 text-hi hover:bg-ink/12',
     danger: 'text-fail hover:bg-fail/10',
   }[kind]
   return (

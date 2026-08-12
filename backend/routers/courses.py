@@ -63,7 +63,8 @@ class AssignmentUpdate(BaseModel):
 
 def _course_summary(svc: CoursesService, course: Course) -> dict:
     d = course.to_dict()
-    d["grade"] = svc.course_grade(course.id)
+    # Canvas's own course total wins when synced; else average the assignments
+    d["grade"] = course.canvas_score if course.canvas_score is not None else svc.course_grade(course.id)
     d["open_assignments"] = len(
         svc.list_assignments(course_id=course.id, status="todo")
     )

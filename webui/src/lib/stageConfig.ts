@@ -23,7 +23,7 @@ export const STAGES: Record<Stage, StageConfig> = {
     appsTitle: 'Colleges',
     appsSub: 'colleges · scholarships · deadlines',
     defaultType: 'undergrad',
-    navOrder: ['/', '/applications', '/study', '/courses', '/documents', '/routines'],
+    navOrder: ['/', '/applications', '/study', '/calendar', '/courses', '/documents', '/routines'],
     requirementTemplates: {
       undergrad: ['Common App essay', 'Transcript request', 'SAT/ACT scores', 'Recommendation letters', 'FAFSA / financial aid', 'Application fee or waiver'],
       scholarship: ['Essay', 'Transcript', 'Recommendation letter', 'Proof of eligibility'],
@@ -35,7 +35,7 @@ export const STAGES: Record<Stage, StageConfig> = {
     appsTitle: 'Applications',
     appsSub: 'internships · programs · scholarships',
     defaultType: 'exchange',
-    navOrder: ['/', '/courses', '/study', '/applications', '/documents', '/routines'],
+    navOrder: ['/', '/courses', '/study', '/calendar', '/applications', '/documents', '/routines'],
     requirementTemplates: {
       exchange: ['Application form', 'Transcript', 'Statement of interest', 'Advisor approval'],
       scholarship: ['Essay', 'Transcript', 'Recommendation letter', 'Proof of eligibility'],
@@ -48,7 +48,7 @@ export const STAGES: Record<Stage, StageConfig> = {
     appsTitle: 'Applications',
     appsSub: 'programs · scholarships · deadlines',
     defaultType: 'grad',
-    navOrder: ['/', '/applications', '/study', '/documents', '/routines', '/courses'],
+    navOrder: ['/', '/applications', '/study', '/calendar', '/documents', '/routines', '/courses'],
     requirementTemplates: {
       grad: ['Statement of purpose', 'CV / resume', 'Transcript request', 'Recommendation letters (ask early — professors forget you)', 'Entrance exam score', 'Application fee or waiver'],
       scholarship: ['Essay', 'Transcript', 'Recommendation letter', 'Proof of eligibility'],
@@ -61,7 +61,7 @@ export const STAGES: Record<Stage, StageConfig> = {
     appsTitle: 'Programs',
     appsSub: 'programs · funding · deadlines',
     defaultType: 'grad',
-    navOrder: ['/', '/applications', '/documents', '/study', '/courses', '/routines'],
+    navOrder: ['/', '/applications', '/documents', '/study', '/calendar', '/courses', '/routines'],
     requirementTemplates: {
       grad: ['Statement of purpose', 'CV / resume', 'Transcript', '3 recommendation letters', 'GRE scores (if required)', 'Writing sample'],
       scholarship: ['Research proposal', 'CV / resume', 'Recommendation letter', 'Budget justification'],
@@ -73,7 +73,7 @@ export const STAGES: Record<Stage, StageConfig> = {
     appsTitle: 'Applications',
     appsSub: 'fellowships · positions · programs',
     defaultType: 'scholarship',
-    navOrder: ['/', '/applications', '/documents', '/study', '/routines', '/courses'],
+    navOrder: ['/', '/applications', '/documents', '/study', '/calendar', '/routines', '/courses'],
     requirementTemplates: {
       scholarship: ['Proposal', 'CV / resume', 'Recommendation letters', 'Budget'],
       exchange: ['Application form', 'CV / resume', 'Statement of interest'],

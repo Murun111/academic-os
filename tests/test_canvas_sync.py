@@ -9,7 +9,8 @@ from backend.routers.connectors import router, reset_services
 
 COURSES_JSON = [
     {"id": 101, "name": "Intro to Chemistry", "course_code": "CHEM 110",
-     "term": {"name": "Fall 2026"}},
+     "term": {"name": "Fall 2026"},
+     "enrollments": [{"computed_current_score": 91.27}]},
     {"id": 102, "name": "World History", "course_code": "HIST 205"},
 ]
 
@@ -141,3 +142,25 @@ def test_canvas_router_rejects_short_token(client):
     r = client.post("/api/connectors/canvas",
                     json={"base_url": "https://school.instructure.com", "token": "abc"})
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_sync_pulls_course_total_grade(services):
+    canvas, courses = services
+    await canvas.sync(courses)
+    chem = next(c for c in courses.list_courses() if c.external_id == "canvas-101")
+    hist = next(c for c in courses.list_courses() if c.external_id == "canvas-102")
+    assert chem.canvas_score == 91.3  # rounded to one decimal
+    assert hist.canvas_score is None  # no enrollments in payload
+
+
+@pytest.mark.asyncio
+async def test_canvas_score_always_refreshes(services):
+    """Unlike assignment grades, the course total is Canvas-owned — resync overwrites."""
+    canvas, courses = services
+    await canvas.sync(courses)
+    chem = next(c for c in courses.list_courses() if c.external_id == "canvas-101")
+    courses.set_canvas_score(chem.id, 50.0)  # simulate stale value
+    await canvas.sync(courses)
+    chem = next(c for c in courses.list_courses() if c.external_id == "canvas-101")
+    assert chem.canvas_score == 91.3

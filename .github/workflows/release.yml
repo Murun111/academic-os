@@ -1,0 +1,146 @@
+name: Build installers
+
+# Tag a release (git tag v0.2.0 && git push --tags) and this builds the
+# macOS DMG, a Windows portable zip, and a Linux tarball (Chromebook
+# Crostini), then attaches all three to a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+env:
+  LLAMA_BUILD: b10273
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm, cache-dependency-path: webui/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install deps
+        run: |
+          cd webui && npm ci && cd ..
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.txt pyinstaller
+      - name: Build DMG
+        run: bash scripts/build_dmg.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: AcademicOS-macOS, path: dist/AcademicOS.dmg }
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm, cache-dependency-path: webui/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Build webui
+        shell: bash
+        run: cd webui && npm ci && VITE_API_MODE=real npm run build
+      - name: Install backend deps
+        run: |
+          python -m venv .venv
+          .venv/Scripts/pip install -r requirements.txt pyinstaller
+      - name: Fetch llama-server (best effort)
+        shell: bash
+        run: |
+          mkdir -p vendor/llama
+          for asset in "llama-$LLAMA_BUILD-bin-win-cpu-x64.zip" "llama-$LLAMA_BUILD-bin-win-avx2-x64.zip"; do
+            if curl -fsSL "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/$asset" -o llama.zip; then
+              unzip -o llama.zip -d llama-tmp
+              find llama-tmp -name 'llama-server.exe' -exec cp {} vendor/llama/ \;
+              find llama-tmp -name '*.dll' -exec cp {} vendor/llama/ \;
+              break
+            fi
+          done
+          ls vendor/llama || echo "no llama binaries — app will run without bundled AI"
+      - name: Freeze backend
+        shell: bash
+        run: |
+          ADD_LLAMA=""
+          [ -f vendor/llama/llama-server.exe ] && ADD_LLAMA='--add-data vendor/llama;vendor/llama'
+          .venv/Scripts/pyinstaller --noconfirm --clean --name academic-os \
+            --paths . \
+            --add-data "webui/dist;webui/dist" \
+            --add-data "examples/agents;examples/agents" \
+            $ADD_LLAMA \
+            --hidden-import backend.app \
+            --collect-submodules backend \
+            --collect-submodules uvicorn \
+            --collect-submodules apscheduler \
+            --collect-submodules pydantic \
+            scripts/serve_frozen.py
+      - name: Zip portable app
+        shell: pwsh
+        run: Compress-Archive -Path dist/academic-os -DestinationPath dist/AcademicOS-windows.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: AcademicOS-windows, path: dist/AcademicOS-windows.zip }
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm, cache-dependency-path: webui/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Build webui
+        run: cd webui && npm ci && VITE_API_MODE=real npm run build
+      - name: Install backend deps
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.txt pyinstaller
+      - name: Fetch llama-server (best effort)
+        run: |
+          mkdir -p vendor/llama
+          if curl -fsSL "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-ubuntu-x64.tar.gz" -o llama.tgz; then
+            tar -xzf llama.tgz -C /tmp/llama-x || mkdir -p /tmp/llama-x
+            find /tmp/llama-x -name 'llama-server' -exec cp {} vendor/llama/ \; || true
+            find /tmp/llama-x -name '*.so*' -exec cp {} vendor/llama/ \; || true
+          fi
+          ls vendor/llama || echo "no llama binaries — app will run without bundled AI"
+      - name: Freeze backend
+        run: |
+          ADD_LLAMA=""
+          [ -f vendor/llama/llama-server ] && ADD_LLAMA='--add-data vendor/llama:vendor/llama'
+          .venv/bin/pyinstaller --noconfirm --clean --name academic-os \
+            --paths . \
+            --add-data "webui/dist:webui/dist" \
+            --add-data "examples/agents:examples/agents" \
+            $ADD_LLAMA \
+            --hidden-import backend.app \
+            --collect-submodules backend \
+            --collect-submodules uvicorn \
+            --collect-submodules apscheduler \
+            --collect-submodules pydantic \
+            scripts/serve_frozen.py
+      - name: Tar portable app
+        run: tar -czf dist/AcademicOS-linux.tar.gz -C dist academic-os
+      - uses: actions/upload-artifact@v4
+        with: { name: AcademicOS-linux, path: dist/AcademicOS-linux.tar.gz }
+
+  release:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true, path: dist }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/AcademicOS.dmg
+            dist/AcademicOS-windows.zip
+            dist/AcademicOS-linux.tar.gz
+          body: |
+            Academic OS — local-first student dashboard.
+
+            **Mac**: download the DMG, drag to Applications, right-click → Open the first time.
+            **Windows**: download the zip, extract, run `academic-os.exe` inside.
+            **Linux / Chromebook (Crostini)**: extract the tarball, run `./academic-os/academic-os`.

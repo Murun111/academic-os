@@ -139,7 +139,7 @@ async def test_file_item_bullet_contains_tags(fact_item: MemoryItem, tmp_path: P
 async def test_file_item_creates_daily_log(fact_item: MemoryItem, tmp_path: Path):
     today = time.strftime("%Y-%m-%d", time.gmtime())
     await file_item(fact_item)
-    log_path = tmp_path / f"Agentic OS/memory/log/{today}.md"
+    log_path = tmp_path / f"notes/memory/log/{today}.md"
     assert log_path.exists(), f"Daily log not created at {log_path}"
     assert fact_item.body in log_path.read_text()
 
@@ -148,7 +148,7 @@ async def test_file_item_creates_daily_log(fact_item: MemoryItem, tmp_path: Path
 async def test_file_item_daily_log_has_frontmatter(fact_item: MemoryItem, tmp_path: Path):
     today = time.strftime("%Y-%m-%d", time.gmtime())
     await file_item(fact_item)
-    content = (tmp_path / f"Agentic OS/memory/log/{today}.md").read_text()
+    content = (tmp_path / f"notes/memory/log/{today}.md").read_text()
     assert "last_updated:" in content
 
 
@@ -213,7 +213,7 @@ async def test_file_item_idempotent_daily_log_no_duplicate(
     today = time.strftime("%Y-%m-%d", time.gmtime())
     await file_item(fact_item)
     await file_item(fact_item)
-    log_content = (tmp_path / f"Agentic OS/memory/log/{today}.md").read_text()
+    log_content = (tmp_path / f"notes/memory/log/{today}.md").read_text()
     assert log_content.count(fact_item.body) == 1
 
 

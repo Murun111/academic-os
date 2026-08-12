@@ -24,7 +24,7 @@ export function GuidePanel({ compact = false }: { compact?: boolean }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full rounded-[10px] border border-line px-3 py-2 text-left text-[12.5px] text-mid hover:bg-black/4"
+        className="w-full rounded-[10px] border border-line px-3 py-2 text-left text-[12.5px] text-mid hover:bg-ink/4"
       >
         New to this? Open the guide
       </button>
@@ -48,7 +48,7 @@ export function GuidePanel({ compact = false }: { compact?: boolean }) {
         {filtered.map(([key, entry]) => {
           const isOpen = expandedKey === key
           return (
-            <div key={key} className="rounded-[10px] px-3 py-2 hover:bg-black/4">
+            <div key={key} className="rounded-[10px] px-3 py-2 hover:bg-ink/4">
               <button
                 type="button"
                 onClick={() => setExpandedKey(isOpen ? null : key)}

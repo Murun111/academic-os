@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Link2, Trash2, Unplug } from 'lucide-react'
 import { connectorsApi, type CanvasConfig, type IcsConfig } from '../lib/connectorsApi'
+import { coursesApi } from '../lib/coursesApi'
 import { Btn, Mono, Panel, PanelHead } from './ui'
 
 export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
@@ -67,7 +68,7 @@ export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://school.instructure.com/feeds/calendars/user_….ics"
-            className="h-9 flex-1 rounded-[10px] border border-line bg-transparent px-3 text-[13px] text-hi outline-none placeholder:text-low focus:border-black/25"
+            className="h-9 flex-1 rounded-[10px] border border-line bg-transparent px-3 text-[13px] text-hi outline-none placeholder:text-low focus:border-ink/25"
           />
           <Btn onClick={() => void addFeed()} disabled={busy || !url.trim()}>
             <span className="flex items-center gap-1.5"><Link2 size={12} /> Add feed</span>
@@ -76,7 +77,7 @@ export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
         {cfg && cfg.feeds.length > 0 && (
           <div className="mb-3 flex flex-col gap-1">
             {cfg.feeds.map((f) => (
-              <div key={f} className="flex items-center gap-2 rounded-[8px] bg-black/4 px-2.5 py-1.5">
+              <div key={f} className="flex items-center gap-2 rounded-[8px] bg-ink/4 px-2.5 py-1.5">
                 <Mono className="flex-1 truncate text-low">{f}</Mono>
                 <button onClick={() => void removeFeed(f)} title="Remove feed" className="text-low hover:text-fail">
                   <Trash2 size={12} />
@@ -93,8 +94,62 @@ export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
         </div>
 
         <CanvasSection onSynced={onSynced} />
+
+        <DuplicateNotice onChanged={onSynced} />
       </div>
     </Panel>
+  )
+}
+
+// ── duplicate detection ──────────────────────────────────────────────────────
+// Connecting BOTH Canvas and a calendar feed creates the same class twice —
+// the two sources can't recognize each other's copies. Detect likely pairs by
+// normalized name and offer one-click removal of the feed copy (Canvas is the
+// richer source).
+function dupKey(name: string): string {
+  return name.toLowerCase().split('(')[0].split('_')[0].trim()
+}
+
+function DuplicateNotice({ onChanged }: { onChanged: () => void }) {
+  const [dupes, setDupes] = useState<{ id: string; name: string }[]>([])
+  const [busy, setBusy] = useState(false)
+
+  const scan = async () => {
+    const res = await coursesApi.listCourses()
+    const courses = res.courses
+    const canvasKeys = new Set(courses.filter((c) => c.source === 'canvas').map((c) => dupKey(c.name)))
+    const feedCopies = courses.filter(
+      (c) => c.source !== 'canvas' && (c.source === 'ics' || c.term === 'Synced') &&
+        dupKey(c.name).length >= 4 && canvasKeys.has(dupKey(c.name)),
+    )
+    setDupes(feedCopies.map((c) => ({ id: c.id, name: c.name })))
+  }
+  useEffect(() => { void scan() }, [])
+
+  const removeCopy = async (id: string) => {
+    setBusy(true)
+    await coursesApi.deleteCourse(id)
+    await scan()
+    onChanged()
+    setBusy(false)
+  }
+
+  if (dupes.length === 0) return null
+  return (
+    <div className="rounded-[10px] border border-pend/25 bg-pend/8 px-3 py-2.5">
+      <p className="mb-1.5 text-[12.5px] text-hi">
+        These classes exist twice — once from Canvas, once from the calendar feed. Canvas has
+        more detail; you can safely remove the feed copies:
+      </p>
+      <div className="flex flex-col gap-1">
+        {dupes.map((d) => (
+          <div key={d.id} className="flex items-center justify-between gap-2">
+            <span className="truncate text-[12.5px] text-mid">{d.name}</span>
+            <Btn onClick={() => void removeCopy(d.id)} disabled={busy}>Remove feed copy</Btn>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -168,7 +223,7 @@ function CanvasSection({ onSynced }: { onSynced: () => void }) {
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
             placeholder="https://yourschool.instructure.com"
-            className="h-9 rounded-[10px] border border-line bg-transparent px-3 text-[13px] text-hi outline-none placeholder:text-low focus:border-black/25"
+            className="h-9 rounded-[10px] border border-line bg-transparent px-3 text-[13px] text-hi outline-none placeholder:text-low focus:border-ink/25"
           />
           <div className="flex gap-2">
             <input
@@ -176,7 +231,7 @@ function CanvasSection({ onSynced }: { onSynced: () => void }) {
               onChange={(e) => setToken(e.target.value)}
               type="password"
               placeholder="paste your access token"
-              className="h-9 flex-1 rounded-[10px] border border-line bg-transparent px-3 text-[13px] text-hi outline-none placeholder:text-low focus:border-black/25"
+              className="h-9 flex-1 rounded-[10px] border border-line bg-transparent px-3 text-[13px] text-hi outline-none placeholder:text-low focus:border-ink/25"
             />
             <Btn onClick={() => void connect()} disabled={busy || !baseUrl.trim() || !token.trim()}>
               <span className="flex items-center gap-1.5"><Link2 size={12} /> Connect</span>

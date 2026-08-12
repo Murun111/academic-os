@@ -29,6 +29,7 @@ class Course:
     instructor: str = ""
     source: str = ""       # "" = manual; "canvas" = synced from Canvas
     external_id: str = ""  # stable id from the source so re-syncs upsert
+    canvas_score: Optional[float] = None  # Canvas's own course total (%), synced
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -280,6 +281,17 @@ class CoursesService:
                 items.append(a)
         items.sort(key=lambda a: a.due)
         return items
+
+    def set_canvas_score(self, course_id: str, score: Optional[float]) -> None:
+        """Store Canvas's computed course total. Canvas-owned — always overwritten
+        on sync (unlike per-assignment grades, which are student-protected)."""
+        courses = self._read_courses()
+        for c in courses:
+            if c.id == course_id:
+                c.canvas_score = score
+                self._write_courses(courses)
+                return
+        raise KeyError(course_id)
 
     def course_grade(self, course_id: str) -> Optional[float]:
         graded = [

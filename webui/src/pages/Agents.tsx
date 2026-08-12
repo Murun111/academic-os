@@ -59,7 +59,7 @@ export function Agents() {
             onClick={() => setSelected(a.name === selected ? null : a.name)}
             onContextMenu={(e) => openMenu(e, agentMenu(a))}
             className={`panel flex items-center gap-4 px-5 py-3.5 text-left transition-colors duration-150 hover:bg-raise2 ${
-              selected === a.name ? 'border-black/15' : ''
+              selected === a.name ? 'border-ink/15' : ''
             }`}
           >
             <StatusDot state={a.state} live={a.state === 'running'} />

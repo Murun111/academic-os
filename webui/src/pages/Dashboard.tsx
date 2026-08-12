@@ -178,7 +178,7 @@ export function Dashboard() {
                 />
                 <div className="flex flex-col gap-px px-2 pb-3">
                   {agents.map((a) => (
-                    <div key={a.name} className="group flex items-center gap-2.5 rounded-[10px] px-3 py-2 hover:bg-black/4">
+                    <div key={a.name} className="group flex items-center gap-2.5 rounded-[10px] px-3 py-2 hover:bg-ink/4">
                       <StatusDot state={a.state} live={a.state === 'running'} />
                       <Mono className="flex-1 truncate text-mid">{a.name}</Mono>
                       <Mono className="text-low group-hover:hidden">{a.lastRun ? timeAgo(a.lastRun) : '—'}</Mono>

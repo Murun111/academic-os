@@ -15,14 +15,65 @@
   --color-low: oklch(0.58 0.008 90);     /* tertiary text / labels */
   --color-line: oklch(0 0 0 / 9%);       /* border / divider */
   --color-hairline: oklch(0 0 0 / 5%);   /* thinner border */
+  --color-ink: oklch(0 0 0);             /* "the text color" — flips white in dark */
 
   /* accents darkened for AA contrast on light surfaces */
   --color-run: oklch(0.55 0.10 155);     /* sage green — success/running */
   --color-pend: oklch(0.58 0.11 80);     /* muted amber — pending */
   --color-fail: oklch(0.53 0.14 30);     /* muted brick — error */
+  --color-acc: oklch(0.55 0.10 155);     /* general accent (same sage as run) */
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+/* backdrop tint vars (plain CSS vars — not utility-generating) */
+:root {
+  --backdrop-blob: oklch(0.4 0.008 90);
+  --backdrop-falloff: oklch(1 0 0 / 55%);
+}
+
+/* ---- dark mode: same token names, night values. Toggled from Settings via
+   document.documentElement.dataset.theme — every utility flips with it. ---- */
+:root[data-theme='dark'] {
+  --color-deep: oklch(0.175 0.008 265);
+  --color-raise: oklch(0.215 0.008 265);
+  --color-raise2: oklch(0.255 0.009 265);
+  --color-hi: oklch(0.925 0.004 90);
+  --color-mid: oklch(0.73 0.006 90);
+  --color-low: oklch(0.55 0.008 90);
+  --color-line: oklch(1 0 0 / 11%);
+  --color-hairline: oklch(1 0 0 / 6%);
+  --color-ink: oklch(1 0 0);
+
+  /* accents brightened for contrast on dark surfaces */
+  --color-run: oklch(0.72 0.11 155);
+  --color-pend: oklch(0.76 0.11 80);
+  --color-fail: oklch(0.68 0.14 30);
+  --color-acc: oklch(0.72 0.11 155);
+
+  --backdrop-blob: oklch(0.72 0.02 265);
+  --backdrop-falloff: oklch(0 0 0 / 30%);
+}
+
+:root[data-theme='dark'] ::selection { background: oklch(1 0 0 / 16%); }
+:root[data-theme='dark'] :focus-visible { outline-color: oklch(1 0 0 / 45%); }
+:root[data-theme='dark'] * { scrollbar-color: oklch(1 0 0 / 22%) transparent; }
+:root[data-theme='dark'] *::-webkit-scrollbar-thumb { background: oklch(1 0 0 / 22%); }
+:root[data-theme='dark'] .glass {
+  background: oklch(0.21 0.008 265 / 66%);
+  border-color: oklch(1 0 0 / 9%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 7%),
+    0 12px 40px oklch(0 0 0 / 40%);
+}
+:root[data-theme='dark'] .glass-strong {
+  background: oklch(0.225 0.008 265 / 95%);
+  border-color: oklch(1 0 0 / 10%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 8%),
+    0 24px 64px oklch(0 0 0 / 50%);
+}
+:root[data-theme='dark'] .panel { box-shadow: 0 1px 2px oklch(0 0 0 / 30%); }
 
 html,
 body,

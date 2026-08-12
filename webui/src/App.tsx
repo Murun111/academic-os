@@ -5,6 +5,7 @@ import { Backdrop } from './components/Backdrop'
 import { Sidebar } from './components/Sidebar'
 import { CommandPalette } from './components/CommandPalette'
 import { StageSetup } from './components/StageSetup'
+import { Tour } from './components/Tour'
 import { Toasts } from './components/Toasts'
 import { useOs } from './lib/store'
 import { Dashboard } from './pages/Dashboard'
@@ -17,11 +18,12 @@ import { Routines } from './pages/Routines'
 import { Agents } from './pages/Agents'
 import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
+import { Calendar } from './pages/Calendar'
 
 const TITLES: Record<string, string> = {
   '/': 'Dashboard', '/applications': 'Applications', '/courses': 'Courses', '/study': 'Study',
-  '/documents': 'Documents', '/routines': 'Routines', '/chat': 'Chat', '/agents': 'Assistants',
-  '/approvals': 'Approvals', '/settings': 'Settings',
+  '/calendar': 'Calendar', '/documents': 'Documents', '/routines': 'Routines', '/chat': 'Chat',
+  '/agents': 'Assistants', '/approvals': 'Approvals', '/settings': 'Settings',
 }
 
 import { NO_MOTION } from './lib/motion'
@@ -40,6 +42,7 @@ function Shell() {
       <Route path="/applications" element={<Applications />} />
       <Route path="/courses" element={<Courses />} />
       <Route path="/study" element={<Study />} />
+      <Route path="/calendar" element={<Calendar />} />
       <Route path="/documents" element={<Documents />} />
       <Route path="/routines" element={<Routines />} />
       <Route path="/chat" element={<Chat />} />
@@ -55,6 +58,7 @@ function Shell() {
         <Backdrop />
         <Sidebar />
         <CommandPalette />
+        <Tour />
         <Toasts />
         <main className="fixed top-0 right-0 bottom-0 left-[92px] overflow-hidden lg:left-[254px]">
           <div className="h-full overflow-y-auto px-7 py-6">{routes}</div>
@@ -69,6 +73,7 @@ function Shell() {
       <Sidebar />
       <CommandPalette />
       <StageSetup />
+      <Tour />
       <Toasts />
       <main className="fixed top-0 right-0 bottom-0 left-[92px] overflow-hidden lg:left-[254px]">
         <AnimatePresence mode="wait">

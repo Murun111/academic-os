@@ -5,12 +5,29 @@ import { api } from '../lib/api'
 import type { ChatMessage, ChatThread } from '../lib/types'
 import { EmptyState, Mono, timeAgo } from '../components/ui'
 
-const MODELS = ['qwen3:14b', 'llama3.3:8b', 'gemma3:12b']
+// shown when no Ollama models are installed — the backend falls back to the
+// bundled local AI regardless of the requested model name
+const FALLBACK_MODELS = ['local ai']
 
 export function Chat() {
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [model, setModel] = useState(MODELS[0])
+  const [models, setModels] = useState<string[]>(FALLBACK_MODELS)
+  const [model, setModel] = useState(FALLBACK_MODELS[0])
+
+  // the picker lists what is actually installed, not a hardcoded wishlist
+  useEffect(() => {
+    void fetch('/api/llms/models?backend=ollama')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const ids = (d?.models ?? []).map((m: { id: string }) => m.id)
+        if (ids.length > 0) {
+          setModels(ids)
+          setModel(ids[0])
+        }
+      })
+      .catch(() => {})
+  }, [])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -73,7 +90,7 @@ export function Chat() {
           <button
             onClick={newThread}
             title="New thread"
-            className="grid size-6 place-items-center rounded-md text-low transition-colors hover:bg-black/5 hover:text-hi"
+            className="grid size-6 place-items-center rounded-md text-low transition-colors hover:bg-ink/5 hover:text-hi"
           >
             <Plus size={13} />
           </button>
@@ -84,7 +101,7 @@ export function Chat() {
               key={t.id}
               onClick={() => setActiveId(t.id)}
               className={`rounded-[10px] px-2.5 py-2 text-left transition-colors duration-150 ${
-                t.id === activeId ? 'bg-black/6' : 'hover:bg-black/4'
+                t.id === activeId ? 'bg-ink/6' : 'hover:bg-ink/4'
               }`}
             >
               <p className={`truncate text-[13px] ${t.id === activeId ? 'text-hi' : 'text-mid'}`}>{t.title}</p>
@@ -117,7 +134,7 @@ export function Chat() {
                   >
                     <div
                       className={`max-w-[62ch] rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed ${
-                        m.role === 'user' ? 'bg-black/8 text-hi' : 'panel text-mid'
+                        m.role === 'user' ? 'bg-ink/8 text-hi' : 'panel text-mid'
                       }`}
                     >
                       {m.content}
@@ -156,12 +173,12 @@ export function Chat() {
             onChange={(e) => setModel(e.target.value)}
             className="rounded-lg bg-transparent px-1 py-1.5 font-mono text-[11.5px] text-low outline-none hover:text-mid"
           >
-            {MODELS.map((m) => <option key={m} value={m} className="bg-raise">{m}</option>)}
+            {models.map((m) => <option key={m} value={m} className="bg-raise">{m}</option>)}
           </select>
           <button
             onClick={() => void send()}
             disabled={!draft.trim() || busy}
-            className="grid size-8 place-items-center rounded-lg bg-black/8 text-hi transition-colors hover:bg-black/13 disabled:opacity-30"
+            className="grid size-8 place-items-center rounded-lg bg-ink/8 text-hi transition-colors hover:bg-ink/13 disabled:opacity-30"
           >
             <ArrowUp size={15} />
           </button>

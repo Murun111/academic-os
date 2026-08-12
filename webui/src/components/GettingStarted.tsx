@@ -61,7 +61,7 @@ export function GettingStarted({ appsCount, coursesCount, loaded }: {
               <span className={`text-[13px] ${s.done ? 'text-low line-through' : 'text-mid'}`}>{s.label}</span>
             </>
           )
-          const cls = 'flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left hover:bg-black/4'
+          const cls = 'flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left hover:bg-ink/4'
           return s.to && !s.done ? (
             <Link key={s.label} to={s.to} className={cls}>{inner}</Link>
           ) : (

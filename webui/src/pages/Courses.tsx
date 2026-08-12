@@ -95,7 +95,7 @@ function AssignmentRow({
   useEffect(() => setGradeDraft(a.grade == null ? '' : String(a.grade)), [a.grade])
 
   return (
-    <div className="flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-black/4">
+    <div className="flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-ink/4">
       <button
         onClick={() => onToggleStatus(a)}
         className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10.5px] transition-colors duration-150 ${

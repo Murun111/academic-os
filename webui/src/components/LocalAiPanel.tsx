@@ -102,8 +102,8 @@ export function LocalAiPanel() {
               <Mono className="text-mid">downloading {dl.model}</Mono>
               <Mono className="text-hi">{dl.pct ?? 0}%</Mono>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-black/6">
-              <div className="h-full rounded-full bg-black/40 transition-[width] duration-500"
+            <div className="h-1.5 overflow-hidden rounded-full bg-ink/6">
+              <div className="h-full rounded-full bg-ink/40 transition-[width] duration-500"
                    style={{ width: `${dl.pct ?? 0}%` }} />
             </div>
           </div>

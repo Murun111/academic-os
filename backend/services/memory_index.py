@@ -1,7 +1,7 @@
 """SQLite-backed memory index with local Ollama embeddings (Phase 1.1 Module A).
 
 Public interface:
-    DB_PATH        — default storage path (~/.agentic-os/memory/index.db)
+    DB_PATH        — test override; None → <data root>/data/memory/index.db
     init_db()      — create directory + table
     embed()        — async; None on any failure (graceful degradation)
     upsert_item()  — sha1(dedup_key) → item_id; stores embedding best-effort
@@ -25,7 +25,16 @@ from backend.services.memory_types import MemoryItem
 # Config
 # ---------------------------------------------------------------------------
 
-DB_PATH: Path = Path.home() / ".agentic-os" / "memory" / "index.db"
+# Test override: set to a Path to pin the DB location. When None (normal
+# operation) the DB lives inside the app data root — never a foreign dir.
+DB_PATH: Path | None = None
+
+
+def _db_path() -> Path:
+    if DB_PATH is not None:
+        return Path(DB_PATH)
+    from backend.vault import agentic_os_dir
+    return agentic_os_dir() / "data" / "memory" / "index.db"
 
 _OLLAMA_URL = "http://127.0.0.1:11434/api/embeddings"
 _OLLAMA_MODEL = "nomic-embed-text"
@@ -67,8 +76,9 @@ CREATE TABLE IF NOT EXISTS memory_items (
 
 def init_db() -> None:
     """Create the DB directory and table if not already present."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    p = _db_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(p) as conn:
         conn.executescript(_SCHEMA)
 
 
@@ -153,7 +163,7 @@ def _row_to_item(row: sqlite3.Row) -> MemoryItem:
 
 def _fetch_all_rows(exclude_id: str = "") -> list[sqlite3.Row]:
     """Return all rows, optionally excluding one item_id."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         if exclude_id:
             return conn.execute(
@@ -178,7 +188,7 @@ def upsert_item(item: MemoryItem) -> str:
     embedding = _embed_sync(item.dedup_key())
     item.embedding = embedding
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(_db_path()) as conn:
         conn.execute(
             """
             INSERT OR REPLACE INTO memory_items
@@ -266,7 +276,7 @@ def search(query: str, k: int = 8) -> list[MemoryItem]:
 
     # Fallback: LIKE on subject + body.
     pattern = f"%{query}%"
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         like_rows = conn.execute(
             "SELECT * FROM memory_items WHERE subject LIKE ? OR body LIKE ? LIMIT ?",
@@ -279,3 +289,19 @@ def all_items() -> list[MemoryItem]:
     """Return every stored MemoryItem."""
     _ensure_db()
     return [_row_to_item(r) for r in _fetch_all_rows()]
+
+
+def delete_item(item_id: str) -> bool:
+    """Remove one item from the index (and therefore from recall)."""
+    _ensure_db()
+    with sqlite3.connect(_db_path()) as conn:
+        cur = conn.execute("DELETE FROM memory_items WHERE item_id = ?", (item_id,))
+        return cur.rowcount > 0
+
+
+def delete_all() -> int:
+    """Forget everything. Returns how many items were removed."""
+    _ensure_db()
+    with sqlite3.connect(_db_path()) as conn:
+        cur = conn.execute("DELETE FROM memory_items")
+        return cur.rowcount

@@ -11,7 +11,7 @@ const blob = (size: string, x: string, y: string, alpha: number, anim: string, d
   left: x,
   top: y,
   borderRadius: '50%',
-  background: `radial-gradient(circle, oklch(0.4 0.008 90 / ${alpha}%) 0%, transparent 65%)`,
+  background: `radial-gradient(circle, color-mix(in oklch, var(--backdrop-blob) ${alpha}%, transparent) 0%, transparent 65%)`,
   animation: `${anim} ${dur} ease-in-out infinite`,
   willChange: 'transform',
 })
@@ -25,7 +25,7 @@ export function Backdrop() {
       {/* faint vertical falloff so the top of the screen breathes */}
       <div
         className="absolute inset-0"
-        style={{ background: 'linear-gradient(180deg, oklch(1 0 0 / 55%) 0%, transparent 30%)' }}
+        style={{ background: 'linear-gradient(180deg, var(--backdrop-falloff) 0%, transparent 30%)' }}
       />
       <div className="absolute inset-0 mix-blend-overlay opacity-[0.05]" style={{ backgroundImage: NOISE }} />
     </div>

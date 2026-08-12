@@ -157,7 +157,7 @@ class IcsSyncService:
                     # term is required by the service; synced courses get a
                     # marker term the student can rename
                     courses[course_name] = courses_service.add_course(
-                        name=course_name, term="Synced", instructor="")
+                        name=course_name, term="Synced", instructor="", source="ics")
                 course = courses[course_name]
 
                 prev = existing.get(ev.uid)

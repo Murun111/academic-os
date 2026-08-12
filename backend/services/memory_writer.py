@@ -1,8 +1,8 @@
 """Memory writer — Module B of Phase 1.1 Memory Consolidation.
 
 Files MemoryItems as markdown into the Obsidian vault under
-``Agentic OS/memory/``.  One note per kind plus a daily chronological
-log under ``Agentic OS/memory/log/<YYYY-MM-DD>.md``.
+``notes/memory/``.  One note per kind plus a daily chronological
+log under ``notes/memory/log/<YYYY-MM-DD>.md``.
 
 Public interface (matches the spec contract exactly):
 
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 # ── Path constants ──────────────────────────────────────────────────────────
 
-_MEMORY_BASE = "Agentic OS/memory"
+_MEMORY_BASE = "notes/memory"
 
 _KIND_TO_FILE: dict[str, str] = {
     "fact":       f"{_MEMORY_BASE}/facts.md",
@@ -58,7 +58,7 @@ def normalize_tag(tag: str) -> str:
 def route(item: MemoryItem) -> str:
     """Return the vault relpath for *item* based on its kind.
 
-    Unknown kinds map to ``Agentic OS/memory/misc.md``.
+    Unknown kinds map to ``notes/memory/misc.md``.
     """
     return _KIND_TO_FILE.get(item.kind, _MISC)
 
@@ -74,7 +74,7 @@ async def file_item(item: MemoryItem) -> str:
        (cheap idempotency — no dup even if re-filed).
     5. Write the kind-note via ``vault_write``.
     6. Repeat steps 2–5 for the daily log at
-       ``Agentic OS/memory/log/<YYYY-MM-DD>.md``.
+       ``notes/memory/log/<YYYY-MM-DD>.md``.
     7. Set ``item.vault_path`` to the kind-note relpath.
     8. Return the kind-note relpath.
 

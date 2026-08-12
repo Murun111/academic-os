@@ -334,3 +334,37 @@ def test_upsert_graceful_item_id_stable_without_embed(monkeypatch):
     id_with_embed = idx.upsert_item(item_b)
 
     assert id_no_embed == id_with_embed
+
+
+# ---------------------------------------------------------------------------
+# delete_item / delete_all (Settings privacy view)
+# ---------------------------------------------------------------------------
+
+def test_delete_item_removes_from_index(monkeypatch):
+    import backend.services.memory_index as idx
+    _patch_embed(monkeypatch, lambda _t: None)
+    item_id = idx.upsert_item(_make_item("Fact A", "Body A."))
+    idx.upsert_item(_make_item("Fact B", "Body B."))
+    assert idx.delete_item(item_id) is True
+    remaining = {i.subject for i in idx.all_items()}
+    assert remaining == {"Fact B"}
+    assert idx.delete_item(item_id) is False  # already gone
+
+
+def test_delete_all_wipes_everything(monkeypatch):
+    import backend.services.memory_index as idx
+    _patch_embed(monkeypatch, lambda _t: None)
+    idx.upsert_item(_make_item("Fact A", "Body A."))
+    idx.upsert_item(_make_item("Fact B", "Body B."))
+    assert idx.delete_all() == 2
+    assert idx.all_items() == []
+
+
+def test_db_path_defaults_inside_data_root(monkeypatch, tmp_path):
+    """Regression: the index must live in the app data root, never ~/.agentic-os."""
+    import backend.services.memory_index as idx
+    monkeypatch.setattr(idx, "DB_PATH", None)
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    p = idx._db_path()
+    assert str(p).startswith(str(tmp_path))
+    assert ".agentic-os" not in str(p)

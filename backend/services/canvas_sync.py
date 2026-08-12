@@ -79,7 +79,7 @@ class CanvasSyncService:
     async def sync(self, courses_service) -> dict:
         cfg = self.config()
         base, token = cfg.get("base_url") or "", cfg.get("token") or ""
-        result = {"courses": 0, "created": 0, "updated": 0, "unchanged": 0, "errors": []}
+        result: dict = {"courses": 0, "created": 0, "updated": 0, "unchanged": 0, "errors": []}
         if not base or not token:
             result["errors"].append({"scope": "config", "error": "base_url and token required"})
             return result
@@ -91,7 +91,8 @@ class CanvasSyncService:
         async with httpx.AsyncClient(timeout=25, headers=headers, follow_redirects=True) as client:
             try:
                 r = await client.get(f"{base}/api/v1/courses",
-                                     params={"enrollment_state": "active", "per_page": 50})
+                                     params={"enrollment_state": "active", "per_page": 50,
+                                             "include[]": "total_scores"})
                 r.raise_for_status()
                 canvas_courses = r.json()
             except Exception as e:
@@ -112,6 +113,20 @@ class CanvasSyncService:
                     course = courses_service.add_course(
                         name=cname, term=term, source="canvas", external_id=ext)
                     existing_courses[ext] = course
+
+                # course total from enrollments (include[]=total_scores) —
+                # Canvas-owned, so always refresh it
+                score = None
+                for enr in cc.get("enrollments") or []:
+                    s = enr.get("computed_current_score")
+                    if isinstance(s, (int, float)):
+                        score = round(float(s), 1)
+                        break
+                if score is not None and course.canvas_score != score:
+                    try:
+                        courses_service.set_canvas_score(course.id, score)
+                    except Exception as e:  # never fail the whole sync on one grade
+                        result["errors"].append({"scope": cname, "error": f"grade: {e}"})
 
                 try:
                     ra = await client.get(
@@ -172,3 +187,26 @@ class CanvasSyncService:
         cfg["last_result"] = result
         self._save(cfg)
         return result
+
+
+AUTO_SYNC_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def auto_sync_loop() -> None:
+    """Background task: while the app runs and Canvas is connected, resync every
+    6 hours so assignments and grades stay fresh without any clicking."""
+    import asyncio
+
+    await asyncio.sleep(60)  # let the app boot; first sync a minute in
+    while True:
+        try:
+            from backend.routers.connectors import get_canvas_service, get_courses_service
+            canvas = get_canvas_service()
+            if canvas.config().get("token"):
+                result = await canvas.sync(get_courses_service())
+                print(f"[canvas] auto-sync: {result['courses']} courses, "
+                      f"{result['created']} new, {result['updated']} updated, "
+                      f"{len(result['errors'])} errors")
+        except Exception as e:  # noqa: BLE001 — the loop must survive anything
+            print(f"[canvas] auto-sync failed: {e!r}")
+        await asyncio.sleep(AUTO_SYNC_INTERVAL_SECONDS)

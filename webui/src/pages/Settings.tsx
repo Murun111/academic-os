@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Check, CalendarPlus } from 'lucide-react'
+import { Check, CalendarPlus, Monitor, Moon, Sun, Trash2 } from 'lucide-react'
 import { Btn, Mono, Panel, PanelHead } from '../components/ui'
 import { LmsSyncPanel } from '../components/LmsSyncPanel'
 import { LocalAiPanel } from '../components/LocalAiPanel'
 import { useOs } from '../lib/store'
 import { profileApi } from '../lib/profileApi'
+import { memoryApi, type MemoryItem } from '../lib/memoryApi'
 import { STAGES, STAGE_ORDER } from '../lib/stageConfig'
 import { TRACKS, TRACK_ORDER, trackApplies, trackConfig, daysToTest } from '../lib/trackConfig'
 import { study } from '../lib/studyApi'
@@ -20,6 +21,9 @@ export function Settings() {
   const setTestDate = useOs((s) => s.setTestDate)
   const reminders = useOs((s) => s.reminders)
   const setReminders = useOs((s) => s.setReminders)
+  const setTour = useOs((s) => s.setTour)
+  const theme = useOs((s) => s.theme)
+  const setTheme = useOs((s) => s.setTheme)
   const [reminderNote, setReminderNote] = useState('')
   const [nameDraft, setNameDraft] = useState(userName)
   const [saved, setSaved] = useState(false)
@@ -79,7 +83,7 @@ export function Settings() {
             onBlur={() => void commitName()}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
             placeholder="What should we call you?"
-            className="mb-4 w-full max-w-[320px] rounded-lg border border-line bg-raise2 px-3 py-2 text-[13px] text-hi outline-none placeholder:text-low focus:border-black/25"
+            className="mb-4 w-full max-w-[320px] rounded-lg border border-line bg-raise2 px-3 py-2 text-[13px] text-hi outline-none placeholder:text-low focus:border-ink/25"
           />
 
           <p className="label-mono mb-1.5">where you are</p>
@@ -90,8 +94,8 @@ export function Settings() {
                 onClick={() => void setStage(s)}
                 className={`rounded-lg border px-3 py-2 text-left transition-colors duration-150 ${
                   stage === s
-                    ? 'border-black/25 bg-black/6 text-hi'
-                    : 'border-line text-mid hover:border-black/15 hover:text-hi'
+                    ? 'border-ink/25 bg-ink/6 text-hi'
+                    : 'border-line text-mid hover:border-ink/15 hover:text-hi'
                 }`}
               >
                 <span className="block text-[13px]">{STAGES[s].label}</span>
@@ -102,6 +106,31 @@ export function Settings() {
           <p className="mt-2 text-[12px] text-low">
             This shapes the whole app — what the pipeline is called, which checklists you get, and
             what shows up first.
+          </p>
+
+          <p className="label-mono mt-4 mb-1.5">appearance</p>
+          <div className="flex gap-2">
+            {([
+              { key: 'system', label: 'System', icon: Monitor },
+              { key: 'light', label: 'Light', icon: Sun },
+              { key: 'dark', label: 'Dark', icon: Moon },
+            ] as const).map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setTheme(key)}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] transition-colors duration-150 ${
+                  theme === key
+                    ? 'border-ink/25 bg-ink/6 text-hi'
+                    : 'border-line text-mid hover:border-ink/15 hover:text-hi'
+                }`}
+              >
+                <Icon size={13} />
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[12px] text-low">
+            System follows your Mac's appearance and switches with it automatically.
           </p>
         </div>
       </Panel>
@@ -123,8 +152,8 @@ export function Settings() {
                   onClick={() => void setTrack(track === t ? null : t)}
                   className={`rounded-lg border px-3 py-2 text-left transition-colors duration-150 ${
                     track === t
-                      ? 'border-black/25 bg-black/6 text-hi'
-                      : 'border-line text-mid hover:border-black/15 hover:text-hi'
+                      ? 'border-ink/25 bg-ink/6 text-hi'
+                      : 'border-line text-mid hover:border-ink/15 hover:text-hi'
                   }`}
                 >
                   <span className="block text-[13px]">{TRACKS[t].label}</span>
@@ -145,7 +174,7 @@ export function Settings() {
                     type="date"
                     value={testDate}
                     onChange={(e) => void setTestDate(e.target.value)}
-                    className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-black/25"
+                    className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                   />
                 </div>
                 {trackCfg.studyPlan && testDate && (
@@ -163,10 +192,13 @@ export function Settings() {
         </Panel>
       )}
 
-      <LocalAiPanel />
+      <div data-tour="settings-ai">
+        <LocalAiPanel />
+      </div>
 
       <LmsSyncPanel onSynced={() => {}} />
 
+      <div data-tour="settings-reminders">
       <Panel className="mt-6">
         <PanelHead label="reminders" />
         <div className="px-5 pb-5">
@@ -175,7 +207,7 @@ export function Settings() {
               type="checkbox"
               checked={reminders}
               onChange={(e) => void setReminders(e.target.checked)}
-              className="size-3.5 accent-black/70"
+              className="size-3.5 accent-ink/70"
             />
             <span className="text-[13px] text-hi">Daily deadline notification</span>
           </label>
@@ -203,6 +235,11 @@ export function Settings() {
           </div>
         </div>
       </Panel>
+      </div>
+
+      <div data-tour="settings-memory">
+        <MemoryPanel />
+      </div>
 
       <Panel className="mt-6">
         <PanelHead label="your data" />
@@ -214,8 +251,139 @@ export function Settings() {
           <p className="mt-2 text-[12px] text-low">
             Back it up by copying that folder. Deleting the app never deletes your data.
           </p>
+          <div className="mt-3">
+            <Btn onClick={() => setTour(true)}>Replay the walkthrough</Btn>
+          </div>
+          <UpdateCheck />
         </div>
       </Panel>
+    </div>
+  )
+}
+
+function MemoryPanel() {
+  const [items, setItems] = useState<MemoryItem[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [confirmWipe, setConfirmWipe] = useState(false)
+
+  const load = async () => {
+    setItems(await memoryApi.items())
+    setLoaded(true)
+  }
+  useEffect(() => { void load() }, [])
+
+  const forgetOne = async (id: string) => {
+    await memoryApi.forget(id)
+    await load()
+  }
+
+  const forgetAll = async () => {
+    if (!confirmWipe) {
+      setConfirmWipe(true)
+      return
+    }
+    await memoryApi.forgetAll()
+    setConfirmWipe(false)
+    await load()
+  }
+
+  return (
+    <Panel className="mt-6">
+      <PanelHead
+        label="what this app remembers"
+        right={loaded ? <Mono className="text-low">{items.length} memories</Mono> : undefined}
+      />
+      <div className="px-5 pb-5">
+        <p className="mb-3 text-[12.5px] text-mid">
+          Chat conversations leave behind small notes — facts, preferences, todos — that get
+          recalled in later chats. They never leave this computer. Delete any of them here;
+          recall stops immediately.
+        </p>
+
+        {loaded && items.length === 0 && (
+          <Mono className="text-low">Nothing yet — memories come from Chat conversations.</Mono>
+        )}
+
+        {items.length > 0 && (
+          <>
+            <div className="mb-3 flex max-h-[320px] flex-col gap-1 overflow-y-auto">
+              {items.map((m) => (
+                <div key={m.item_id} className="flex items-start gap-2 rounded-[10px] px-2 py-1.5 hover:bg-ink/4">
+                  <span className="mt-0.5 shrink-0 rounded-full border border-line px-1.5 font-mono text-[10px] text-low">
+                    {m.kind}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[12.5px] text-hi">{m.subject}</p>
+                    <p className="line-clamp-2 text-[12px] leading-snug text-mid">{m.body}</p>
+                  </div>
+                  <button
+                    onClick={() => void forgetOne(m.item_id)}
+                    title="Forget this"
+                    className="mt-0.5 shrink-0 text-low hover:text-fail"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <Btn kind={confirmWipe ? 'danger' : 'quiet'} onClick={() => void forgetAll()}>
+              {confirmWipe ? 'Click again to forget everything' : 'Forget everything'}
+            </Btn>
+          </>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+function UpdateCheck() {
+  const [version, setVersion] = useState('')
+  const [repo, setRepo] = useState('')
+  const [note, setNote] = useState('')
+  const [latestUrl, setLatestUrl] = useState('')
+
+  useEffect(() => {
+    void fetch('/api/meta').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (d) { setVersion(d.version); setRepo(d.repo) }
+    }).catch(() => {})
+  }, [])
+
+  const check = async () => {
+    setNote('Checking…')
+    try {
+      const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`)
+      if (!r.ok) { setNote('Could not reach the update server.'); return }
+      const rel = await r.json()
+      const latest = String(rel.tag_name || '').replace(/^v/, '')
+      if (!latest) { setNote('No releases published yet.'); return }
+      if (latest === version) {
+        setNote(`You're on the latest version (${version}).`)
+        setLatestUrl('')
+      } else {
+        setNote(`Version ${latest} is available — you have ${version}.`)
+        setLatestUrl(rel.html_url)
+      }
+    } catch {
+      setNote('Could not check — are you offline?')
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-hairline pt-3">
+      <div className="flex items-center gap-3">
+        <Mono className="text-low">version {version || '…'}</Mono>
+        <Btn onClick={() => void check()} disabled={!repo}>Check for updates</Btn>
+      </div>
+      {note && (
+        <p className="mt-1.5 text-[12.5px] text-mid">
+          {note}{' '}
+          {latestUrl && (
+            <a href={latestUrl} target="_blank" rel="noreferrer" className="text-hi underline decoration-dotted">
+              Download it here
+            </a>
+          )}
+        </p>
+      )}
     </div>
   )
 }

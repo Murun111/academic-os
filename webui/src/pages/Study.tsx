@@ -35,13 +35,13 @@ function KindPill({ kind }: { kind: AgendaItem['kind'] }) {
 function AgendaRow({ item, onToggleDone }: { item: AgendaItem; onToggleDone?: (id: string) => void }) {
   const isTask = item.kind === 'task'
   return (
-    <div className="flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-black/4">
+    <div className="flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-ink/4">
       {isTask && item.id ? (
         <input
           type="checkbox"
           checked={false}
           onChange={() => onToggleDone?.(item.id as string)}
-          className="size-3.5 accent-black/70"
+          className="size-3.5 accent-ink/70"
           aria-label={`Mark "${item.title ?? 'task'}" done`}
         />
       ) : (
@@ -122,6 +122,7 @@ export function Study() {
       </div>
 
       {/* quick add */}
+      <div data-tour="study-quickadd">
       <Panel className="mb-6">
         <div className="flex items-center gap-2 px-4 py-3">
           <input
@@ -144,6 +145,7 @@ export function Study() {
           </Btn>
         </div>
       </Panel>
+      </div>
 
       {error && (
         <Panel className="mb-6">
@@ -152,6 +154,7 @@ export function Study() {
       )}
 
       {/* week at a glance — all 7 days fit the width, no scrolling */}
+      <div data-tour="study-week">
       <Panel className="mb-6">
         <PanelHead label="next 7 days" />
         <div className="grid grid-cols-7 gap-2 px-4 pb-4">
@@ -159,7 +162,7 @@ export function Study() {
             const items = byDate.get(d) ?? []
             const isTodayCol = d === today
             return (
-              <div key={d} className={`min-w-0 rounded-[10px] p-1.5 ${isTodayCol ? 'bg-black/4' : ''}`}>
+              <div key={d} className={`min-w-0 rounded-[10px] p-1.5 ${isTodayCol ? 'bg-ink/4' : ''}`}>
                 <div className="mb-1.5 flex items-baseline justify-between px-0.5">
                   <span className="label-mono">{isTodayCol ? 'today' : dayLabel(d)}</span>
                   {items.length > 0 && <Mono className="text-low">{items.length}</Mono>}
@@ -186,7 +189,7 @@ export function Study() {
                           type="checkbox"
                           checked={false}
                           onChange={() => void handleToggleDone(item.id as string)}
-                          className="size-3 shrink-0 accent-black/70"
+                          className="size-3 shrink-0 accent-ink/70"
                           aria-label={`Mark "${item.title ?? 'task'}" done`}
                         />
                       )}
@@ -198,6 +201,7 @@ export function Study() {
           })}
         </div>
       </Panel>
+      </div>
 
       {/* today + overdue */}
       <Panel>

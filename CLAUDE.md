@@ -32,11 +32,17 @@ Commands:
 
 **Tailwind 4:** No `tailwind.config.js`. All tokens live in `webui/src/index.css` under `@theme { }` block.
 
+**Theming:** light + dark via `:root[data-theme='dark']` var overrides in index.css. Never write `bg-black/N` etc. in components — use `ink/N` (`--color-ink`: black in light, white in dark). Literal `black/` is reserved for modal scrims and the tour overlay only. Toggle lives in Settings; persisted in localStorage `academicos.theme`.
+
 **Frontend API clients:** Each page owns a self-contained `<module>Api.ts` (e.g., `studyApi.ts`, `coursesApi.ts`). Not centralized in `lib/api.ts`.
 
 **Stage-aware UI:** every per-stage difference lives in `webui/src/lib/stageConfig.ts` as data — never `if (stage === ...)` in components. `useState(cfg.X)` captures the pre-onboarding fallback; sync with a `useEffect` on the cfg value.
 
 **Track-aware UI:** second axis (pre-med/pre-law/…) in `webui/src/lib/trackConfig.ts`, same data-only rule. Only applies when `trackApplies(stage)` (undergrad/beyond). Track overrides layer on top of stage config (`trackCfg?.x ?? cfg.x`).
+
+**Memory lives in the data root:** index at `<root>/data/memory/index.db`, notes under `<root>/notes/memory/`. `memory_index.DB_PATH`/`trajectory_memory.DB_PATH` are test overrides (None in prod — resolved via vault). The fork originally hardcoded `~/.agentic-os/` — never reintroduce that. Settings has the privacy view (list/delete/forget-all via /api/memory/items).
+
+**Kill by exact PID, not `lsof -ti:PORT | head -1`:** Chrome connections also show up on the port — killing the first PID can leave the old server running and serving stale routes (SPA catch-all answers unknown /api paths with HTML).
 
 **Dev backend has no --reload:** after editing backend code, kill the uvicorn on 7878 and restart it — the old process silently serves stale code (pydantic drops unknown fields, so new profile fields "vanish" on save).
 

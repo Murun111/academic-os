@@ -8,6 +8,7 @@ import { GraduationCap, BookOpen, Briefcase, FlaskConical, Rocket } from 'lucide
 import { useOs } from '../lib/store'
 import { STAGES, STAGE_ORDER, type Stage } from '../lib/stageConfig'
 import { TRACKS, TRACK_ORDER, trackApplies } from '../lib/trackConfig'
+import { TOUR_DONE_KEY } from './Tour'
 
 const ICONS: Record<Stage, typeof GraduationCap> = {
   highschool: GraduationCap,
@@ -24,21 +25,31 @@ export function StageSetup() {
   const setStage = useOs((s) => s.setStage)
   const setTrack = useOs((s) => s.setTrack)
   const openPicker = useOs((s) => s.openStagePicker)
+  const setTour = useOs((s) => s.setTour)
   // second onboarding question, shown after picking undergrad/beyond first-run
   const [askTrack, setAskTrack] = useState(false)
 
   const firstRun = stageLoaded && stage === null
   const open = firstRun || pickerOpen || askTrack
 
+  // onboarding just finished → start the guided tour (once, ever)
+  const maybeStartTour = () => {
+    if (!localStorage.getItem(TOUR_DONE_KEY)) setTour(true)
+  }
+
   const pickStage = async (key: Stage) => {
     const wasFirstRun = firstRun
     await setStage(key)
-    if (wasFirstRun && trackApplies(key)) setAskTrack(true)
+    if (wasFirstRun) {
+      if (trackApplies(key)) setAskTrack(true)
+      else maybeStartTour()
+    }
   }
 
   const pickTrack = async (t: (typeof TRACK_ORDER)[number] | null) => {
     if (t) await setTrack(t)
     setAskTrack(false)
+    maybeStartTour()
   }
 
   return (
@@ -77,7 +88,7 @@ export function StageSetup() {
                     <button
                       key={t}
                       onClick={() => void pickTrack(t)}
-                      className="rounded-[12px] border border-line p-4 text-left transition-colors duration-150 hover:border-black/15 hover:bg-black/4"
+                      className="rounded-[12px] border border-line p-4 text-left transition-colors duration-150 hover:border-ink/15 hover:bg-ink/4"
                     >
                       <p className="text-[14px] font-medium">{TRACKS[t].label}</p>
                       <p className="mt-0.5 text-[12px] text-low">{TRACKS[t].tagline}</p>
@@ -105,8 +116,8 @@ export function StageSetup() {
                         onClick={() => void pickStage(key)}
                         className={`rounded-[12px] border p-4 text-left transition-colors duration-150 ${
                           active
-                            ? 'border-black/25 bg-black/6'
-                            : 'border-line hover:border-black/15 hover:bg-black/4'
+                            ? 'border-ink/25 bg-ink/6'
+                            : 'border-line hover:border-ink/15 hover:bg-ink/4'
                         }`}
                       >
                         <Icon size={18} strokeWidth={1.75} className="mb-2 opacity-70" />

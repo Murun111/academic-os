@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Calendar, Check, Plus, Search, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, Check, Landmark, Plus, Search, Trash2, X } from 'lucide-react'
 import { scoutApi } from '../lib/scoutApi'
 import {
   applicationsApi, APPLICATION_STATUSES, APPLICATION_TYPES, requirementsProgress,
@@ -12,6 +12,14 @@ import { stageConfig } from '../lib/stageConfig'
 import { trackApplies, trackConfig } from '../lib/trackConfig'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
 
+// human labels for the type filter tabs
+const TYPE_LABEL: Record<ApplicationType, string> = {
+  undergrad: 'Colleges',
+  grad: 'Programs',
+  scholarship: 'Scholarships',
+  exchange: 'Exchange',
+}
+
 const STATUS_LABEL: Record<ApplicationStatus, string> = {
   researching: 'Researching',
   preparing: 'Preparing',
@@ -20,14 +28,68 @@ const STATUS_LABEL: Record<ApplicationStatus, string> = {
   decision: 'Decision',
 }
 
-const DECISION_TONE: Record<string, string> = {
-  accepted: 'running',
-  rejected: 'failed',
-  waitlisted: 'pending',
-}
-
 function daysUntil(deadline: string): number {
   return Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000)
+}
+
+// ── Find-scholarships fill-in-the-blanks options ─────────────────────────────
+const STAGE_PHRASE: Record<string, string> = {
+  highschool: 'high school student',
+  undergrad: 'undergraduate student',
+  gapyear: 'college graduate on a gap year',
+  grad: 'graduate student',
+  beyond: 'graduate',
+}
+
+const MAJORS = [
+  'Computer Science', 'Engineering', 'Business', 'Biology / Pre-med',
+  'Nursing', 'Economics', 'Psychology', 'Arts & Design', 'Other…',
+]
+
+const IDENTITIES = [
+  'First-generation', 'Immigrant', 'Low-income', 'Woman in STEM',
+  'Underrepresented minority', 'International student', 'Veteran', 'Student with a disability',
+]
+
+const AMOUNTS = ['any amount', 'over $1,000', 'over $5,000', 'over $10,000']
+
+// ── FAFSA one-click card ─────────────────────────────────────────────────────
+const FAFSA_STAGES = new Set(['highschool', 'undergrad', 'gapyear'])
+
+const FAFSA_CHECKLIST = [
+  'Create your FSA ID at studentaid.gov',
+  'Parent / contributor creates their FSA ID',
+  'Gather tax returns and income info',
+  'List the schools that should receive your FAFSA',
+  'Submit the FAFSA',
+  'Check your confirmation and compare aid offers',
+]
+
+const FAFSA_NOTES =
+  'File as early as you can — some state and college aid is first-come, first-served. ' +
+  'June 30 is the FEDERAL deadline; most state deadlines are much earlier — check yours at ' +
+  'studentaid.gov. Filing is free. Anyone charging a fee to file it is a scam.'
+
+function nextJune30Iso(): string {
+  const now = new Date()
+  const thisYear = new Date(now.getFullYear(), 5, 30)
+  const d = now <= thisYear ? thisYear : new Date(now.getFullYear() + 1, 5, 30)
+  return `${d.getFullYear()}-06-30`
+}
+
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full border px-2.5 py-1 text-[12px] transition-colors duration-150 ${
+        active
+          ? 'border-ink/25 bg-ink/6 text-hi'
+          : 'border-line text-mid hover:border-ink/15 hover:text-hi'
+      }`}
+    >
+      {children}
+    </button>
+  )
 }
 
 function formatUsd(amount: number): string {
@@ -70,15 +132,35 @@ export function Applications() {
   const [amountDraft, setAmountDraft] = useState('')
   const [feeDraft, setFeeDraft] = useState('')
   const [notesDraft, setNotesDraft] = useState('')
+  const [nameDraft, setNameDraft] = useState('')
+  const [orgDraft, setOrgDraft] = useState('')
+  const [urlDraft, setUrlDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<ApplicationStatus | null>(null)
   const [showScout, setShowScout] = useState(false)
-  const [criteria, setCriteria] = useState('')
+  const [major, setMajor] = useState('')
+  const [customMajor, setCustomMajor] = useState('')
+  const [identities, setIdentities] = useState<string[]>([])
+  const [amount, setAmount] = useState('')
+  const [extra, setExtra] = useState('')
   const [scoutState, setScoutState] = useState<'idle' | 'running' | 'done' | 'failed'>('idle')
   const [scoutSummary, setScoutSummary] = useState('')
   const scoutPoll = useRef<number | null>(null)
 
   useEffect(() => () => { if (scoutPoll.current) window.clearInterval(scoutPoll.current) }, [])
+
+  // compose the fill-in-the-blanks selections into one plain sentence
+  const chosenMajor = major === 'Other…' ? customMajor.trim() : major
+  const criteria = [
+    STAGE_PHRASE[stage ?? 'undergrad'],
+    chosenMajor && `studying ${chosenMajor}`,
+    identities.length > 0 && identities.join(', ').toLowerCase(),
+    amount && (amount === 'any amount' ? 'open to scholarships of any amount' : `looking for scholarships ${amount}`),
+    extra.trim(),
+  ].filter(Boolean).join(', ')
+
+  const toggleIdentity = (id: string) =>
+    setIdentities((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
   const startScout = async () => {
     const c = criteria.trim()
@@ -131,14 +213,34 @@ export function Applications() {
   useEffect(() => { setFormType(cfg.defaultType) }, [cfg.defaultType])
 
   const selectedItem = items.find((i) => i.id === selected) ?? null
-  const columns = APPLICATION_STATUSES.map((status) => ({ status, items: items.filter((i) => i.status === status) }))
+
+  // type filter tabs — split colleges from scholarships without two pages
+  const [typeFilter, setTypeFilter] = useState<ApplicationType | 'all'>('all')
+  const presentTypes = APPLICATION_TYPES.filter((t) => items.some((i) => i.type === t))
+  const visible = typeFilter === 'all' ? items : items.filter((i) => i.type === typeFilter)
+  const visibleDeadlines = typeFilter === 'all' ? deadlines : deadlines.filter((d) => d.type === typeFilter)
+  const columns = APPLICATION_STATUSES.map((status) => ({ status, items: visible.filter((i) => i.status === status) }))
 
   // sync drafts whenever the drawer selection changes
   useEffect(() => {
     setAmountDraft(selectedItem?.amount == null ? '' : String(selectedItem.amount))
     setFeeDraft(selectedItem?.app_fee == null ? '' : String(selectedItem.app_fee))
     setNotesDraft(selectedItem?.notes ?? '')
+    setNameDraft(selectedItem?.name ?? '')
+    setOrgDraft(selectedItem?.org ?? '')
+    setUrlDraft(selectedItem?.url ?? '')
   }, [selectedItem?.id])
+
+  const patch = async (fields: Parameters<typeof applicationsApi.update>[1]) => {
+    if (!selectedItem) return
+    await applicationsApi.update(selectedItem.id, fields)
+    await load()
+  }
+
+  const commitName2 = async () => {
+    if (!selectedItem || !nameDraft.trim() || nameDraft.trim() === selectedItem.name) return
+    await patch({ name: nameDraft.trim() })
+  }
 
   const commitAmount = async () => {
     if (!selectedItem) return
@@ -222,6 +324,29 @@ export function Applications() {
     await load()
   }
 
+  const fafsaApplies = FAFSA_STAGES.has(stage ?? '')
+  const hasFafsa = items.some((i) => i.name.toLowerCase().includes('fafsa'))
+
+  const addFafsa = async () => {
+    setBusy(true)
+    const created = await applicationsApi.create({
+      name: 'FAFSA (federal student aid)',
+      type: 'scholarship',
+      org: 'Federal Student Aid',
+      url: 'https://studentaid.gov/h/apply-for-aid/fafsa',
+      deadline: nextJune30Iso(),
+      notes: FAFSA_NOTES,
+    })
+    if (created) {
+      for (const label of FAFSA_CHECKLIST) {
+        await applicationsApi.addRequirement(created.id, label)
+      }
+      setSelected(created.id)
+    }
+    setBusy(false)
+    await load()
+  }
+
   const seedChecklist = async () => {
     // for cards that arrived without one (agent-found, synced) — seed the
     // stage template for this type
@@ -272,12 +397,21 @@ export function Applications() {
           <h1 className="text-[24px] font-semibold tracking-[-0.01em]">{appsTitle}</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Btn onClick={() => setShowScout((s) => !s)}>
-            <span className="flex items-center gap-1.5"><Search size={13} /> Find scholarships</span>
-          </Btn>
-          <Btn kind="primary" onClick={() => setShowForm((s) => !s)}>
-            <span className="flex items-center gap-1.5"><Plus size={13} /> Add application</span>
-          </Btn>
+          {fafsaApplies && !hasFafsa && !loading && (
+            <Btn onClick={() => void addFafsa()} disabled={busy}>
+              <span className="flex items-center gap-1.5"><Landmark size={13} /> Add FAFSA</span>
+            </Btn>
+          )}
+          <span data-tour="apps-scout">
+            <Btn onClick={() => setShowScout((s) => !s)}>
+              <span className="flex items-center gap-1.5"><Search size={13} /> Find scholarships</span>
+            </Btn>
+          </span>
+          <span data-tour="apps-add">
+            <Btn kind="primary" onClick={() => setShowForm((s) => !s)}>
+              <span className="flex items-center gap-1.5"><Plus size={13} /> Add application</span>
+            </Btn>
+          </span>
         </div>
       </div>
 
@@ -290,23 +424,56 @@ export function Applications() {
             className="mb-6 overflow-hidden"
           >
             <Panel className="p-4">
-              <p className="mb-2 text-[12.5px] text-mid">
-                Describe yourself and what you're looking for — your words, no forms. The scout
-                searches the web and proposes matches; nothing enters your pipeline until you
-                approve it.
+              <p className="mb-3 text-[12.5px] text-mid">
+                Pick what fits — the scout searches the web and proposes matches. Nothing enters
+                your pipeline until you approve it.
               </p>
+
+              <p className="label-mono mb-1.5">studying</p>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {MAJORS.map((m) => (
+                  <Chip key={m} active={major === m} onClick={() => setMajor(major === m ? '' : m)}>{m}</Chip>
+                ))}
+                {major === 'Other…' && (
+                  <input
+                    value={customMajor}
+                    onChange={(e) => setCustomMajor(e.target.value)}
+                    placeholder="your major"
+                    autoFocus
+                    className="rounded-full border border-line bg-raise2 px-3 py-1 text-[12px] text-hi outline-none placeholder:text-low focus:border-ink/25"
+                  />
+                )}
+              </div>
+
+              <p className="label-mono mb-1.5">about you <span className="normal-case">(pick any)</span></p>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {IDENTITIES.map((id) => (
+                  <Chip key={id} active={identities.includes(id)} onClick={() => toggleIdentity(id)}>{id}</Chip>
+                ))}
+              </div>
+
+              <p className="label-mono mb-1.5">award size</p>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {AMOUNTS.map((a) => (
+                  <Chip key={a} active={amount === a} onClick={() => setAmount(amount === a ? '' : a)}>{a}</Chip>
+                ))}
+              </div>
+
               <div className="flex gap-2">
                 <input
-                  value={criteria}
-                  onChange={(e) => setCriteria(e.target.value)}
+                  value={extra}
+                  onChange={(e) => setExtra(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') void startScout() }}
-                  placeholder="e.g. first-gen CS major in Texas, scholarships over $5,000"
-                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-2 text-[13px] text-hi outline-none placeholder:text-low focus:border-black/25"
+                  placeholder="Anything else — state, sport, club, situation… (optional)"
+                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-2 text-[13px] text-hi outline-none placeholder:text-low focus:border-ink/25"
                 />
                 <Btn kind="primary" onClick={() => void startScout()} disabled={scoutState === 'running' || !criteria.trim()}>
                   {scoutState === 'running' ? 'Searching…' : 'Search'}
                 </Btn>
               </div>
+              {criteria && scoutState !== 'running' && (
+                <p className="mt-2 text-[12px] text-low">Will search for: <span className="text-mid">{criteria}</span></p>
+              )}
               {scoutState === 'running' && (
                 <p className="mt-2 text-[12.5px] text-mid">
                   Searching the web — this takes a minute or two. You can leave this page; results
@@ -351,7 +518,7 @@ export function Applications() {
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     placeholder="Stanford MS CS"
-                    className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-black/25"
+                    className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                   />
                 </div>
                 <div>
@@ -359,7 +526,7 @@ export function Applications() {
                   <select
                     value={formType}
                     onChange={(e) => setFormType(e.target.value as ApplicationType)}
-                    className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-black/25"
+                    className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                   >
                     {APPLICATION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
@@ -370,7 +537,7 @@ export function Applications() {
                     type="date"
                     value={formDeadline}
                     onChange={(e) => setFormDeadline(e.target.value)}
-                    className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-black/25"
+                    className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                   />
                 </div>
                 <Btn kind="primary" onClick={() => void submitForm()} disabled={busy || !formName.trim()}>
@@ -383,20 +550,42 @@ export function Applications() {
         )}
       </AnimatePresence>
 
+      {presentTypes.length > 1 && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5">
+          {(['all', ...presentTypes] as const).map((t) => {
+            const n = t === 'all' ? items.length : items.filter((i) => i.type === t).length
+            return (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className={`rounded-full border px-3 py-1.5 text-[12.5px] transition-colors duration-150 ${
+                  typeFilter === t
+                    ? 'border-ink/25 bg-ink/6 text-hi'
+                    : 'border-line text-mid hover:border-ink/15 hover:text-hi'
+                }`}
+              >
+                {t === 'all' ? 'Everything' : TYPE_LABEL[t]}
+                <span className="ml-1.5 font-mono text-[11px] text-low">{n}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       <Panel className="mb-6">
-        <PanelHead label="next deadlines" right={<Mono className="text-low">{deadlines.length} upcoming</Mono>} />
+        <PanelHead label="next deadlines" right={<Mono className="text-low">{visibleDeadlines.length} upcoming</Mono>} />
         {costs && (costs.fees_due > 0 || costs.potential_awards > 0) && (
           <Mono className="-mt-1 block px-5 pb-3 text-low">
             fees due {formatUsd(costs.fees_due)} · potential awards {formatUsd(costs.potential_awards)}
           </Mono>
         )}
         <div className="flex flex-col gap-px px-2 pb-3">
-          {deadlines.length === 0 && <EmptyState title="No deadlines in the next 30 days." />}
-          {deadlines.slice(0, 3).map((d) => (
+          {visibleDeadlines.length === 0 && <EmptyState title="No deadlines in the next 30 days." />}
+          {visibleDeadlines.slice(0, 3).map((d) => (
             <button
               key={d.id}
               onClick={() => setSelected(d.id)}
-              className="flex items-center gap-3 rounded-[10px] px-3 py-2 text-left hover:bg-black/4"
+              className="flex items-center gap-3 rounded-[10px] px-3 py-2 text-left hover:bg-ink/4"
             >
               <Calendar size={13} className="shrink-0 text-low" />
               <span className="flex-1 truncate text-[12.5px] text-mid">{d.name}</span>
@@ -407,15 +596,15 @@ export function Applications() {
         </div>
       </Panel>
 
-      {items.length === 0 ? (
+      {visible.length === 0 ? (
         <EmptyState title="No applications yet." hint="Add your first application to start the pipeline." />
       ) : (
-        <div className="overflow-x-auto pb-2">
+        <div data-tour="apps-board" className="overflow-x-auto pb-2">
           <div className="flex min-w-max gap-3">
             {columns.map(({ status, items: colItems }) => (
               <div
                 key={status}
-                className={`w-[220px] shrink-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-black/4 ring-1 ring-black/10' : ''}`}
+                className={`w-[220px] shrink-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
                 onDragOver={(e) => {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
@@ -443,7 +632,7 @@ export function Applications() {
                           e.dataTransfer.setData('text/plain', item.id)
                         }}
                         onDragEnd={() => { setDragId(null); setDragOver(null) }}
-                        className={`panel cursor-grab px-3 py-2.5 transition-colors duration-150 hover:bg-raise2 active:cursor-grabbing ${selected === item.id ? 'border-black/15' : ''} ${dragId === item.id ? 'opacity-40' : ''}`}
+                        className={`panel cursor-grab px-3 py-2.5 transition-colors duration-150 hover:bg-raise2 active:cursor-grabbing ${selected === item.id ? 'border-ink/15' : ''} ${dragId === item.id ? 'opacity-40' : ''}`}
                       >
                         <button onClick={() => setSelected(item.id === selected ? null : item.id)} className="mb-1.5 block w-full text-left">
                           <span className="mb-1 block truncate text-[13px] text-hi">{item.name}</span>
@@ -491,25 +680,82 @@ export function Applications() {
             exit={{ opacity: 0, x: 16 }}
             transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
           >
-            <div className="mb-1 flex items-start justify-between gap-3">
-              <h2 className="text-[17px] font-semibold tracking-[-0.01em]">{selectedItem.name}</h2>
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={() => void commitName2()}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                className="-mx-1 w-full rounded-md px-1 text-[17px] font-semibold tracking-[-0.01em] text-hi outline-none hover:bg-ink/4 focus:bg-ink/4"
+                aria-label="Application name"
+              />
               <button onClick={() => setSelected(null)} className="text-low hover:text-mid"><X size={16} /></button>
             </div>
-            <div className="mb-4 flex flex-wrap items-center gap-2">
-              <Pill>{selectedItem.type}</Pill>
-              <Pill>{STATUS_LABEL[selectedItem.status]}</Pill>
-              {selectedItem.decision_result && (
-                <Pill tone={DECISION_TONE[selectedItem.decision_result]}>{selectedItem.decision_result}</Pill>
-              )}
-              {selectedItem.org && <Mono className="text-low">{selectedItem.org}</Mono>}
+
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <div>
+                <p className="label-mono mb-1">type</p>
+                <select
+                  value={selectedItem.type}
+                  onChange={(e) => void patch({ type: e.target.value as ApplicationType })}
+                  className="rounded-lg border border-line bg-raise2 px-2 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
+                >
+                  {APPLICATION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <p className="label-mono mb-1">deadline</p>
+                <input
+                  type="date"
+                  value={selectedItem.deadline ?? ''}
+                  onChange={(e) => void patch({ deadline: e.target.value || null })}
+                  className="rounded-lg border border-line bg-raise2 px-2 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
+                />
+              </div>
+              <div className="flex flex-col items-start gap-1 pb-0.5">
+                <Pill>{STATUS_LABEL[selectedItem.status]}</Pill>
+                {selectedItem.deadline && <DeadlineLabel deadline={selectedItem.deadline} />}
+              </div>
             </div>
 
-            {selectedItem.deadline && (
+            {selectedItem.status === 'decision' && (
               <div className="mb-4">
-                <p className="label-mono mb-1">deadline</p>
-                <DeadlineLabel deadline={selectedItem.deadline} />
+                <p className="label-mono mb-1">result</p>
+                <select
+                  value={selectedItem.decision_result}
+                  onChange={(e) => void patch({ decision_result: e.target.value as Application['decision_result'] })}
+                  className="rounded-lg border border-line bg-raise2 px-2 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
+                >
+                  <option value="">undecided</option>
+                  <option value="accepted">accepted</option>
+                  <option value="rejected">rejected</option>
+                  <option value="waitlisted">waitlisted</option>
+                </select>
               </div>
             )}
+
+            <div className="mb-4 flex gap-3">
+              <div className="flex-1">
+                <p className="label-mono mb-1">school / funder</p>
+                <input
+                  value={orgDraft}
+                  onChange={(e) => setOrgDraft(e.target.value)}
+                  onBlur={() => { if (orgDraft !== selectedItem.org) void patch({ org: orgDraft }) }}
+                  placeholder="e.g. Stanford"
+                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none placeholder:text-low focus:border-ink/25"
+                />
+              </div>
+              <div className="flex-1">
+                <p className="label-mono mb-1">link</p>
+                <input
+                  value={urlDraft}
+                  onChange={(e) => setUrlDraft(e.target.value)}
+                  onBlur={() => { if (urlDraft !== selectedItem.url) void patch({ url: urlDraft }) }}
+                  placeholder="https://…"
+                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none placeholder:text-low focus:border-ink/25"
+                />
+              </div>
+            </div>
 
             <div className="mb-4 flex items-end gap-3">
               <div className="flex-1">
@@ -521,7 +767,7 @@ export function Applications() {
                   onChange={(e) => setAmountDraft(e.target.value)}
                   onBlur={() => void commitAmount()}
                   placeholder="0"
-                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-black/25"
+                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                 />
               </div>
               <div className="flex-1">
@@ -533,7 +779,7 @@ export function Applications() {
                   onChange={(e) => setFeeDraft(e.target.value)}
                   onBlur={() => void commitFee()}
                   placeholder="0"
-                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-black/25"
+                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                 />
               </div>
             </div>
@@ -543,7 +789,7 @@ export function Applications() {
                 type="checkbox"
                 checked={selectedItem.fee_waived}
                 onChange={(e) => void toggleFeeWaived(e.target.checked)}
-                className="size-3.5 accent-black/70"
+                className="size-3.5 accent-ink/70"
               />
               <span className="text-[12.5px] text-mid">fee waived</span>
             </label>
@@ -564,7 +810,7 @@ export function Applications() {
                   <div key={r.id} className="flex items-center gap-2">
                     <button
                       onClick={() => void toggleRequirement(selectedItem, r.id, r.done)}
-                      className={`flex size-4 shrink-0 items-center justify-center rounded border border-line ${r.done ? 'bg-black/12 text-hi' : 'text-transparent'}`}
+                      className={`flex size-4 shrink-0 items-center justify-center rounded border border-line ${r.done ? 'bg-ink/12 text-hi' : 'text-transparent'}`}
                     >
                       <Check size={11} />
                     </button>
@@ -581,7 +827,7 @@ export function Applications() {
                   onChange={(e) => setNewReqLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') void addRequirement() }}
                   placeholder="Add requirement…"
-                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none focus:border-black/25"
+                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
                 />
                 <Btn onClick={() => void addRequirement()} disabled={!newReqLabel.trim()}><Plus size={13} /></Btn>
               </div>
@@ -595,7 +841,7 @@ export function Applications() {
                 onBlur={() => void commitNotes()}
                 placeholder="What is this? Award details, why it's a fit, who to ask for letters…"
                 rows={4}
-                className="w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2 text-[12.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-black/25"
+                className="w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2 text-[12.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-ink/25"
               />
             </div>
 

@@ -35,7 +35,7 @@ export function Toasts() {
             <button
               onClick={() => dismiss(t.id)}
               aria-label="Dismiss"
-              className="grid size-6 place-items-center rounded-md text-low transition-colors hover:bg-black/5 hover:text-mid"
+              className="grid size-6 place-items-center rounded-md text-low transition-colors hover:bg-ink/5 hover:text-mid"
             >
               <X size={12} />
             </button>

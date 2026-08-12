@@ -126,7 +126,7 @@ export function Documents() {
               key={k}
               onClick={() => setKindFilter(k)}
               className={`rounded-full px-3 py-1 font-mono text-[11.5px] transition-colors duration-150 ${
-                kindFilter === k ? 'bg-black/8 text-hi' : 'text-low hover:text-mid'
+                kindFilter === k ? 'bg-ink/8 text-hi' : 'text-low hover:text-mid'
               }`}
             >
               {k}

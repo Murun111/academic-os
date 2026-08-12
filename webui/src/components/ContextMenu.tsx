@@ -70,7 +70,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState | null; onClose
               role="menuitem"
               onClick={() => { it.onSelect(); onClose() }}
               className={`flex w-full items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] text-left text-[13px] transition-colors duration-100 ${
-                it.danger ? 'text-fail hover:bg-fail/10' : 'text-mid hover:bg-black/5 hover:text-hi'
+                it.danger ? 'text-fail hover:bg-fail/10' : 'text-mid hover:bg-ink/5 hover:text-hi'
               }`}
             >
               {it.icon && <it.icon size={13} strokeWidth={1.75} />}
