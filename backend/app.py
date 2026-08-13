@@ -100,6 +100,13 @@ async def lifespan(app: FastAPI):
     # Agent runner — loads agents/*.md from the data root, runs them on
     # demand via Ollama, persists runs to data/agents/runs.jsonl.
     # Wires the per-service factories so agent tool calls hit real services.
+    try:
+        from backend.services.agent_seed import seed_default_agents
+        _seeded = seed_default_agents()
+        if _seeded:
+            print(f"[startup] seeded {_seeded} default agent(s)")
+    except Exception as e:
+        print(f"[startup] agent seeding failed: {e!r}")
     app.state.agent_loader = AgentLoader(agents_dir=agentic_os_dir() / "agents")
     app.state.run_store = RunStore(
         store_path=agentic_os_dir() / "data" / "agents" / "runs.jsonl"
@@ -148,6 +155,9 @@ async def lifespan(app: FastAPI):
     _reminder_task.cancel()
     _canvas_task.cancel()
     _backup_task.cancel()
+    await asyncio.gather(
+        _reminder_task, _canvas_task, _backup_task, return_exceptions=True
+    )
     await app.state.ollama.close()
     app.state.agent_scheduler.stop()
 
@@ -179,6 +189,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Origins allowed to open /ws/events. Absent Origin (non-browser clients,
+# tests) is allowed too — only a mismatched browser Origin is rejected.
+_WS_ALLOWED_ORIGINS = {
+    "http://localhost:7878",
+    "http://127.0.0.1:7878",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
 
 
 @app.middleware("http")
@@ -236,7 +255,12 @@ def health() -> dict[str, Any]:
 def app_meta() -> dict:
     """App version + update repo, for the Settings about/update check."""
     from backend.version import APP_VERSION, UPDATE_REPO
-    return {"version": APP_VERSION, "repo": UPDATE_REPO, "data_format": DATA_FORMAT_STATE}
+    return {
+        "version": APP_VERSION,
+        "repo": UPDATE_REPO,
+        "data_format": DATA_FORMAT_STATE,
+        "data_path": str(agentic_os_dir()),
+    }
 
 
 @app.get("/api/health/ready")
@@ -315,6 +339,11 @@ async def llms_chat(body: dict) -> JSONResponse:
     )
     user_text = last_user["content"] if last_user else ""
     msgs = [ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs]
+    # House style first, so recall context inserted below reads as context
+    # rather than as the instruction of record. Applies to every backend —
+    # the Chat bubble renders plain text, so markdown and emoji show up raw.
+    from backend.llm_hub import HOUSE_STYLE
+    msgs.insert(0, ChatMessage(role="system", content=HOUSE_STYLE))
     # Phase 1.4: inject relevant memory as a system message (local-first, best-effort).
     # Affects only what the model sees this turn; does NOT change what save_thread persists.
     if user_text and os.environ.get("MEMORY_RECALL", "1") != "0":
@@ -598,13 +627,46 @@ def memory_items() -> dict:
     }
 
 
+def _scrub_memory_notes(deleted_text: str) -> None:
+    """Remove any line containing *deleted_text* (stripped) from every
+    ``<data root>/notes/memory/*.md`` file. Best-effort: rewrites each
+    touched file atomically; silently no-ops when the directory is missing.
+    """
+    target = deleted_text.strip()
+    if not target:
+        return
+    notes_dir = resolve_vault_path() / "notes" / "memory"
+    if not notes_dir.exists():
+        return
+    for md_path in notes_dir.glob("*.md"):
+        try:
+            original = md_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines = original.split("\n")
+        kept = [ln for ln in lines if target not in ln]
+        if len(kept) == len(lines):
+            continue
+        tmp_path = md_path.with_name(md_path.name + ".tmp")
+        try:
+            tmp_path.write_text("\n".join(kept), encoding="utf-8")
+            os.replace(tmp_path, md_path)
+        except OSError:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 @app.delete("/api/memory/items/{item_id}")
 def memory_item_delete(item_id: str) -> JSONResponse:
     """Forget one memory — removed from the index, recall stops immediately."""
     from backend.services import memory_index
-    if memory_index.delete_item(item_id):
-        return JSONResponse({"ok": True, "item_id": item_id})
-    return JSONResponse({"error": "not_found", "item_id": item_id}, status_code=404)
+    deleted_text = memory_index.delete_item(item_id)
+    if deleted_text is None:
+        return JSONResponse({"error": "not_found", "item_id": item_id}, status_code=404)
+    _scrub_memory_notes(deleted_text)
+    return JSONResponse({"ok": True, "item_id": item_id})
 
 
 @app.post("/api/memory/forget_all")
@@ -615,9 +677,12 @@ def memory_forget_all() -> dict:
     from backend.vault import resolve_vault_path
     n = memory_index.delete_all()
     notes_dir = resolve_vault_path() / "notes" / "memory"
+    errors: list[str] = []
     if notes_dir.exists():
-        shutil.rmtree(notes_dir, ignore_errors=True)
-    return {"ok": True, "forgotten": n}
+        def _on_error(func, path, exc) -> None:
+            errors.append(f"{path}: {exc}")
+        shutil.rmtree(notes_dir, onexc=_on_error)
+    return {"ok": True, "forgotten": n, "errors": errors}
 
 
 @app.get("/api/memory/stats")
@@ -1300,6 +1365,10 @@ async def websocket_events(ws: WebSocket):
 
     All real-time events flow through the event hub (backend.services.events).
     """
+    origin = ws.headers.get("origin")
+    if origin is not None and origin not in _WS_ALLOWED_ORIGINS:
+        await ws.close(code=1008)
+        return
     await ws.accept()
     await ws.send_json({"type": "hello", "ts": _now(), "msg": "connected"})
     q = events.subscribe()

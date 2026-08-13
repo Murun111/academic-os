@@ -2,7 +2,11 @@
 
 The student picks any folder (iCloud Drive, Google Drive, Dropbox — they all
 mount as folders) and the app mirrors its data there: data/, notes/, agents/.
-The models/ dir is deliberately excluded (gigabytes, re-downloadable).
+The models/ dir is deliberately excluded (gigabytes, re-downloadable), and so
+is data/connectors/ (LMS credentials, e.g. the Canvas token — must never be
+copied into a cloud-synced backup folder). Restore treats data/connectors the
+same way: entirely outside the mirrored scope, so it's never diffed, never
+restored, and never deleted by a restore.
 
 Config: data/backup.json {"path": "...", "last_backup": iso}
 Loop: hourly while the app runs, plus a Back Up Now button.
@@ -11,12 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 BACKUP_INTERVAL_SECONDS = 60 * 60
 _SUBDIRS = ("data", "notes", "agents")  # what gets mirrored
+_EXCLUDE_FROM_DATA = {"connectors"}  # never mirrored: holds LMS credentials
 
 
 def _root() -> Path:
@@ -41,7 +48,11 @@ def config() -> dict:
 
 
 def _save(cfg: dict) -> None:
-    _config_path().write_text(json.dumps(cfg))
+    """Write config atomically: tmp file in the same dir, then replace."""
+    p = _config_path()
+    tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(cfg))
+    os.replace(tmp, p)
 
 
 def set_path(path: str) -> dict:
@@ -62,6 +73,15 @@ def set_path(path: str) -> dict:
     return status()
 
 
+def _copytree_excluding(src: Path, dst: Path, exclude: set[str]) -> None:
+    """Like shutil.copytree, but skips `exclude` names at src's top level
+    only (not at deeper levels, where the same name is unrelated)."""
+    def _ignore(directory: str, _names: list[str]) -> set[str]:
+        return exclude if Path(directory) == src else set()
+
+    shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_ignore)
+
+
 def run_backup() -> dict:
     """Mirror data/, notes/, agents/ into <path>/AcademicOS-Backup."""
     cfg = config()
@@ -77,7 +97,10 @@ def run_backup() -> dict:
             src = root / sub
             if not src.exists():
                 continue
-            shutil.copytree(src, dest / sub, dirs_exist_ok=True)
+            if sub == "data":
+                _copytree_excluding(src, dest / sub, _EXCLUDE_FROM_DATA)
+            else:
+                shutil.copytree(src, dest / sub, dirs_exist_ok=True)
             copied += 1
         cfg["last_backup"] = datetime.now().isoformat(timespec="seconds")
         _save(cfg)
@@ -119,15 +142,22 @@ def _backup_dir() -> Path | None:
 
 
 def _mirrored_files(base: Path) -> dict[str, Path]:
-    """Map of root-relative posix path -> absolute Path for every file under base's mirrored subdirs."""
+    """Map of root-relative posix path -> absolute Path for every file under
+    base's mirrored subdirs. data/connectors is outside the mirrored scope
+    entirely (holds LMS credentials) — excluded here so it's never diffed,
+    restored, or deleted by a restore."""
     files: dict[str, Path] = {}
     for sub in _SUBDIRS:
         sub_dir = base / sub
         if not sub_dir.exists():
             continue
         for p in sub_dir.rglob("*"):
-            if p.is_file():
-                files[p.relative_to(base).as_posix()] = p
+            if not p.is_file():
+                continue
+            rel = p.relative_to(base)
+            if sub == "data" and rel.parts[1:2] == ("connectors",):
+                continue
+            files[rel.as_posix()] = p
     return files
 
 

@@ -24,6 +24,14 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t]+")
 _BLOCK_RE = re.compile(r"<(script|style|nav|header|footer|svg|noscript)\b.*?</\1>", re.S | re.I)
 
+# Connectivity failures (DNS/refused/unreachable, or any request timeout) —
+# as opposed to a reachable server returning an HTTP error status. Surfaced
+# to the model as a plain "offline" signal instead of a raw exception string,
+# so it tells the student they're offline rather than hallucinating around
+# a stack trace.
+_CONNECTION_ERRORS = (httpx.ConnectError, httpx.TimeoutException)
+_OFFLINE_RESULT = {"error": "offline", "detail": "no internet connection"}
+
 
 def _clean(fragment: str) -> str:
     return _html.unescape(_TAG_RE.sub("", fragment)).strip()
@@ -39,10 +47,13 @@ def _real_url(href: str) -> str:
 
 
 async def search(query: str, limit: int = 8) -> dict:
-    """→ {query, results: [{title, url}], count}"""
-    async with httpx.AsyncClient(timeout=15, headers=_UA, follow_redirects=True) as c:
-        r = await c.get("https://html.duckduckgo.com/html/", params={"q": query})
-        r.raise_for_status()
+    """→ {query, results: [{title, url}], count} or an offline error dict."""
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=_UA, follow_redirects=True) as c:
+            r = await c.get("https://html.duckduckgo.com/html/", params={"q": query})
+            r.raise_for_status()
+    except _CONNECTION_ERRORS:
+        return dict(_OFFLINE_RESULT)
     results = []
     for href, title_html in _RESULT_RE.findall(r.text)[:limit]:
         url = _real_url(href)
@@ -53,12 +64,16 @@ async def search(query: str, limit: int = 8) -> dict:
 
 
 async def fetch(url: str) -> dict:
-    """→ {url, final_url, text, truncated}. Text-only, scripts/nav stripped."""
-    async with httpx.AsyncClient(timeout=20, headers=_UA, follow_redirects=True) as c:
-        r = await c.get(url)
-        r.raise_for_status()
-        body = r.text
-        final_url = str(r.url)
+    """→ {url, final_url, text, truncated}. Text-only, scripts/nav stripped.
+    Returns an offline error dict on a connectivity failure."""
+    try:
+        async with httpx.AsyncClient(timeout=20, headers=_UA, follow_redirects=True) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+            body = r.text
+            final_url = str(r.url)
+    except _CONNECTION_ERRORS:
+        return dict(_OFFLINE_RESULT)
     body = _BLOCK_RE.sub(" ", body)
     # keep some block structure as newlines before stripping tags
     body = re.sub(r"</(p|div|li|h[1-6]|tr|br)>", "\n", body, flags=re.I)

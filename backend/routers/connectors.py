@@ -1,6 +1,8 @@
 """Connector endpoints — LMS calendar-feed (ICS) sync."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
@@ -92,13 +94,18 @@ def canvas_status() -> dict:
 
 
 @router.post("/canvas")
-def canvas_set(body: CanvasCredsBody) -> dict:
-    """Save the school's Canvas base URL + the student's personal token."""
+async def canvas_set(body: CanvasCredsBody) -> dict:
+    """Save the school's Canvas base URL + the student's personal token, then
+    kick off an immediate background sync — the student sees their courses
+    without needing to find "Sync now"."""
     token = body.token.strip()
     if len(token) < 8:
         return JSONResponse({"error": "bad_token", "detail": "token looks too short"},
                             status_code=422)
-    return get_canvas_service().set_credentials(str(body.base_url), token)
+    result = get_canvas_service().set_credentials(str(body.base_url), token)
+    if result.get("connected"):
+        asyncio.create_task(get_canvas_service().sync(get_courses_service()))
+    return result
 
 
 @router.post("/canvas/clear")
@@ -109,10 +116,20 @@ def canvas_clear() -> dict:
 
 @router.post("/canvas/sync")
 async def canvas_sync() -> JSONResponse:
-    """Pull active courses + assignments from Canvas now."""
+    """Pull active courses + assignments from Canvas now. On a total failure
+    (bad token, unreachable school, Canvas outage) responds non-2xx with an
+    {error: "auth_error" | "network_error" | "canvas_error", ...} body so the
+    UI can show a specific message instead of a generic failure."""
     masked = get_canvas_service().masked_config()
     if not masked["connected"]:
         return JSONResponse({"error": "not_connected",
                              "detail": "set base_url and token first"}, status_code=400)
     result = await get_canvas_service().sync(get_courses_service())
+    kind = result.get("error_kind")
+    if kind:
+        detail = result["errors"][0]["error"] if result.get("errors") else kind
+        body = {**result, "error": kind, "detail": detail}
+        if result.get("error_status") is not None:
+            body["status"] = result["error_status"]
+        return JSONResponse(body, status_code=502)
     return JSONResponse(result)

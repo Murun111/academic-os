@@ -8,6 +8,7 @@ import { StageSetup } from './components/StageSetup'
 import { Tour } from './components/Tour'
 import { Toasts } from './components/Toasts'
 import { DataFormatBanner } from './components/DataFormatBanner'
+import { BackendDownBanner } from './components/BackendDownBanner'
 import { useOs } from './lib/store'
 import { Dashboard } from './pages/Dashboard'
 import { Chat } from './pages/Chat'
@@ -101,6 +102,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
       <DataFormatBanner />
+      <BackendDownBanner />
       <HashRouter>
         <Shell />
       </HashRouter>

@@ -11,6 +11,7 @@ crash-safe appends, atomic rewrites for updates.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -40,6 +41,7 @@ class Document:
     linked_application_ids: list[str] = field(default_factory=list)
     notes: str = ""
     content: str = ""  # the essay text itself — the app is the editor, not a filing cabinet
+    files: list = field(default_factory=list)  # [{name, size, added_at}] — stored under files/<doc_id>/
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -213,6 +215,97 @@ class DocumentsService:
         if len(new_items) == len(items):
             raise KeyError(doc_id)
         self._write_all(new_items)
+        # cascade: drop this document's attached files too
+        import shutil
+
+        shutil.rmtree(self._files_dir(doc_id), ignore_errors=True)
+
+    # === file attachments ===
+
+    MAX_FILE_BYTES = 25 * 1024 * 1024  # a transcript PDF is ~1MB; 25MB is generous
+
+    def _files_dir(self, doc_id: str) -> Path:
+        return self.data_dir / "files" / doc_id
+
+    @staticmethod
+    def _safe_filename(name: str) -> str:
+        name = (name or "").strip()
+        if not name or "/" in name or "\\" in name or ".." in name or name.startswith("."):
+            raise DocumentsServiceError("invalid filename")
+        return name
+
+    def attach_file(self, doc_id: str, filename: str, data: bytes) -> Document:
+        """Store a file for this document. Name collisions get a numeric suffix.
+
+        Write order: bytes go to a .tmp file first, then the JSONL record is
+        updated and persisted (with the final, collision-resolved name), and
+        only once that succeeds does the tmp get renamed into place. This
+        way a crash before the JSONL write leaves only an inert .tmp file
+        (no orphan entry a student could see and re-download), rather than
+        a real file with no metadata pointing at it. Tradeoff: for the brief
+        window between _write_all() and os.replace(), the persisted metadata
+        names a file that doesn't exist under its final name yet — acceptable
+        since the read path (file_path()) already 404s gracefully on a
+        missing file.
+        """
+        if len(data) > self.MAX_FILE_BYTES:
+            raise DocumentsServiceError(
+                f"file too large ({len(data)} bytes; max {self.MAX_FILE_BYTES})"
+            )
+        filename = self._safe_filename(filename)
+        items = self._read_all()
+        for it in items:
+            if it.id == doc_id:
+                fdir = self._files_dir(doc_id)
+                fdir.mkdir(parents=True, exist_ok=True)
+                target = fdir / filename
+                stem, suffix = target.stem, target.suffix
+                n = 1
+                while target.exists():
+                    target = fdir / f"{stem}-{n}{suffix}"
+                    n += 1
+                tmp = fdir / f".{target.name}.uploading"
+                tmp.write_bytes(data)
+                it.files.append({
+                    "name": target.name,
+                    "size": len(data),
+                    "added_at": self._now_iso(),
+                })
+                it.updated_at = self._now_iso()
+                try:
+                    self._write_all(items)
+                except Exception:
+                    it.files.pop()
+                    tmp.unlink(missing_ok=True)
+                    raise
+                os.replace(tmp, target)
+                return it
+        raise KeyError(doc_id)
+
+    def file_path(self, doc_id: str, filename: str) -> Path:
+        """Absolute path of an attached file, for serving. Raises on unknown."""
+        filename = self._safe_filename(filename)
+        doc = self.get(doc_id)
+        if not any(f["name"] == filename for f in doc.files):
+            raise KeyError(filename)
+        p = self._files_dir(doc_id) / filename
+        if not p.is_file():
+            raise KeyError(filename)
+        return p
+
+    def remove_file(self, doc_id: str, filename: str) -> Document:
+        filename = self._safe_filename(filename)
+        items = self._read_all()
+        for it in items:
+            if it.id == doc_id:
+                if not any(f["name"] == filename for f in it.files):
+                    raise KeyError(filename)
+                it.files = [f for f in it.files if f["name"] != filename]
+                (self._files_dir(doc_id) / filename).unlink(missing_ok=True)
+                it.updated_at = self._now_iso()
+                self._write_all(items)
+                return it
+        raise KeyError(doc_id)
 
     def link(self, doc_id: str, application_id: str) -> Document:
         """Link a document to an application id. Idempotent."""

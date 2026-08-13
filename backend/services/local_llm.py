@@ -13,6 +13,7 @@ download from Hugging Face.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -33,6 +34,7 @@ MODELS = {
         "url": ("https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF"
                 "/resolve/main/Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
         "size": 2497280736,
+        "sha256": "2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e",
     },
     "small": {
         "label": "Qwen2.5 0.5B (fast, weak laptops)",
@@ -40,11 +42,16 @@ MODELS = {
         "url": ("https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF"
                 "/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"),
         "size": 397808192,
+        "sha256": "6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653",
     },
 }
 
 _proc: subprocess.Popen | None = None
 _download_thread: threading.Thread | None = None
+_start_thread: threading.Thread | None = None
+_start_lock = threading.Lock()
+_starting = False
+_start_error: str | None = None
 
 
 # ── paths ─────────────────────────────────────────────────────────
@@ -108,6 +115,8 @@ def status() -> dict:
                    for k, m in MODELS.items()},
         "download": prog,
         "running": server_running(),
+        "starting": _starting,
+        "start_error": _start_error,
         "port": PORT,
     }
 
@@ -144,6 +153,18 @@ def download_model(key: str) -> dict:
                             "done": False, "error": None}))
             if part.stat().st_size != spec["size"]:
                 raise IOError(f"size mismatch: {part.stat().st_size} != {spec['size']}")
+            expected_sha256 = spec.get("sha256")
+            if expected_sha256:
+                _progress_path().write_text(json.dumps(
+                    {"model": key, "pct": 100.0, "done": False, "error": None,
+                     "verifying": True}))
+                digest = hashlib.sha256()
+                with open(part, "rb") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != expected_sha256:
+                    part.unlink(missing_ok=True)
+                    raise IOError("checksum mismatch — download corrupted, please retry")
             part.rename(target)
             _progress_path().write_text(json.dumps(
                 {"model": key, "pct": 100.0, "done": True, "error": None}))
@@ -186,6 +207,43 @@ def ensure_running(wait_seconds: int = 90) -> bool:
             return False  # crashed
         time.sleep(1)
     return False
+
+
+def start_running_async() -> dict:
+    """Kick off ensure_running() in a background thread and return immediately.
+
+    Callers should poll status() — its "running" field reflects the real
+    health check, and "starting"/"start_error" track the background attempt.
+    """
+    global _start_thread, _starting, _start_error
+    if server_running():
+        return {"ok": True, "already_running": True}
+    binary = binary_path()
+    inst = installed_model()
+    if binary is None:
+        return {"ok": False, "detail": "binary missing"}
+    if inst is None:
+        return {"ok": False, "detail": "model not downloaded"}
+
+    with _start_lock:
+        if _start_thread and _start_thread.is_alive():
+            return {"ok": True, "starting": True}
+
+        _starting = True
+        _start_error = None
+
+        def _run() -> None:
+            global _starting, _start_error
+            try:
+                ok = ensure_running()
+                if not ok:
+                    _start_error = "failed to start"
+            finally:
+                _starting = False
+
+        _start_thread = threading.Thread(target=_run, daemon=True)
+        _start_thread.start()
+    return {"ok": True, "starting": True}
 
 
 def stop() -> bool:

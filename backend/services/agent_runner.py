@@ -193,6 +193,10 @@ class AgentRunner:
     """
 
     DEFAULT_MAX_ITERATIONS = 8
+    # Floor for the per-call chat budget (see _execute): even when the run's
+    # deadline is nearly up, give the model at least this long to respond
+    # rather than cancelling it almost instantly.
+    MIN_CHAT_TIMEOUT_SECONDS = 5.0
 
     def __init__(
         self,
@@ -464,18 +468,35 @@ class AgentRunner:
         for iteration in range(max_iter):
             run.iterations = iteration + 1
 
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 run.status = RunStatus.TIMEOUT
                 run.error = f"timeout after {spec.timeout_seconds}s"
                 return
 
+            # Bound THIS chat call (including its own internal retries) by
+            # whatever's left of the run's budget. Without this, the deadline
+            # is only re-checked between loop iterations — a single slow LLM
+            # call can block well past a "60s" timeout, and by the time it
+            # finally returns the result gets discarded anyway. Floor the
+            # budget so a nearly-exhausted deadline still gives the model a
+            # fair last shot instead of cancelling almost instantly.
+            chat_budget = max(deadline - now, self.MIN_CHAT_TIMEOUT_SECONDS)
+
             try:
-                response = await self._chat_with_retry(
-                    messages=messages,
-                    tools=ollama_tools,
-                    agent_model=agent_model,
+                response = await asyncio.wait_for(
+                    self._chat_with_retry(
+                        messages=messages,
+                        tools=ollama_tools,
+                        agent_model=agent_model,
+                    ),
+                    timeout=chat_budget,
                 )
-            except (httpx.HTTPError, httpx.ConnectError, httpx.TimeoutException, asyncio.TimeoutError):
+            except asyncio.TimeoutError:
+                run.status = RunStatus.TIMEOUT
+                run.error = f"timeout — the AI didn't finish within {spec.timeout_seconds}s"
+                return
+            except (httpx.HTTPError, httpx.ConnectError, httpx.TimeoutException):
                 text = await self._fallback_complete(spec, messages)
                 if text:
                     run.result = text

@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Link2, Plus, Search } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight, Download, Link2, Paperclip, Plus, Search, Trash2 } from 'lucide-react'
 import {
   DOCUMENT_KINDS,
+  DOCUMENT_STATUSES,
   documentsApi,
   type Document,
   type DocumentKind,
+  type DocumentStatus,
 } from '../lib/documentsApi'
 import { Btn, EmptyState, Mono, Panel, Pill, timeAgo } from '../components/ui'
 import { routinesApi } from '../lib/routinesApi'
@@ -181,6 +183,7 @@ function DocumentRow({
   onToggle: () => void
   onChanged: (d: Document) => void
 }) {
+  const [title, setTitle] = useState(doc.title)
   const [notes, setNotes] = useState(doc.notes)
   const [tagsInput, setTagsInput] = useState(doc.tags.join(', '))
   const [versionNote, setVersionNote] = useState('')
@@ -189,12 +192,41 @@ function DocumentRow({
   const [contentSaved, setContentSaved] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [coachBusy, setCoachBusy] = useState(false)
+  const [fileNote, setFileNote] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // two-click delete on attached files: first click arms per-filename, second deletes, auto-disarms after 3s
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState<string | null>(null)
+  const fileConfirmTimer = useRef<number | null>(null)
 
   useEffect(() => {
+    setTitle(doc.title)
     setNotes(doc.notes)
     setTagsInput(doc.tags.join(', '))
     setContent(doc.content)
-  }, [doc.id, doc.notes, doc.tags, doc.content])
+  }, [doc.id, doc.title, doc.notes, doc.tags, doc.content])
+
+  useEffect(() => () => { if (fileConfirmTimer.current) window.clearTimeout(fileConfirmTimer.current) }, [])
+
+  const saveTitle = async () => {
+    const trimmed = title.trim()
+    if (!trimmed) { setTitle(doc.title); return }
+    if (trimmed === doc.title) return
+    const res = await documentsApi.update(doc.id, { title: trimmed })
+    if (res?.ok) onChanged(res.item)
+    else setTitle(doc.title)
+  }
+
+  const saveKind = async (kind: DocumentKind) => {
+    if (kind === doc.kind) return
+    const res = await documentsApi.update(doc.id, { kind })
+    if (res?.ok) onChanged(res.item)
+  }
+
+  const saveStatus = async (status: DocumentStatus) => {
+    if (status === doc.status) return
+    const res = await documentsApi.update(doc.id, { status })
+    if (res?.ok) onChanged(res.item)
+  }
 
   const saveNotes = async () => {
     if (notes === doc.notes) return
@@ -219,6 +251,40 @@ function DocumentRow({
     const f = await routinesApi.essayFeedback(content, doc.title)
     setFeedback(f ? f.feedback : 'The essay coach is offline — start the local AI in Settings.')
     setCoachBusy(false)
+  }
+
+  const uploadFile = async (f: File) => {
+    setFileNote('Uploading…')
+    const res = await documentsApi.uploadFile(doc.id, f)
+    if (res?.ok) {
+      onChanged(res.item)
+      setFileNote('')
+    } else {
+      setFileNote('Upload failed — files up to 25 MB are supported.')
+    }
+  }
+
+  const removeFile = async (name: string) => {
+    const res = await documentsApi.deleteFile(doc.id, name)
+    if (res?.ok) onChanged(res.item)
+  }
+
+  const clickRemoveFile = (name: string) => {
+    if (confirmDeleteFile !== name) {
+      setConfirmDeleteFile(name)
+      if (fileConfirmTimer.current) window.clearTimeout(fileConfirmTimer.current)
+      fileConfirmTimer.current = window.setTimeout(() => {
+        setConfirmDeleteFile(null)
+        fileConfirmTimer.current = null
+      }, 3000)
+      return
+    }
+    if (fileConfirmTimer.current) {
+      window.clearTimeout(fileConfirmTimer.current)
+      fileConfirmTimer.current = null
+    }
+    setConfirmDeleteFile(null)
+    void removeFile(name)
   }
 
   const saveTags = async () => {
@@ -258,6 +324,43 @@ function DocumentRow({
 
       {expanded && (
         <div className="border-t border-hairline px-4 py-4">
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <div className="min-w-[180px] flex-1">
+              <p className="label-mono mb-1.5">title</p>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={() => void saveTitle()}
+                placeholder="Document title…"
+                className="w-full rounded-lg border border-line bg-transparent px-2.5 py-1.5 text-[13.5px] text-hi outline-none placeholder:text-low focus:border-ink/25"
+              />
+            </div>
+            <div>
+              <p className="label-mono mb-1.5">kind</p>
+              <select
+                value={doc.kind}
+                onChange={(e) => void saveKind(e.target.value as DocumentKind)}
+                className="rounded-lg border border-line bg-transparent px-2 py-1.5 font-mono text-[11.5px] text-mid outline-none hover:text-hi"
+              >
+                {DOCUMENT_KINDS.map((k) => (
+                  <option key={k} value={k} className="bg-raise">{k}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <p className="label-mono mb-1.5">status</p>
+              <select
+                value={doc.status}
+                onChange={(e) => void saveStatus(e.target.value as DocumentStatus)}
+                className="rounded-lg border border-line bg-transparent px-2 py-1.5 font-mono text-[11.5px] text-mid outline-none hover:text-hi"
+              >
+                {DOCUMENT_STATUSES.map((s) => (
+                  <option key={s} value={s} className="bg-raise">{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           <div className="mb-1.5 flex items-center justify-between">
             <p className="label-mono">the essay itself</p>
             {contentSaved && <Mono className="text-acc">saved</Mono>}
@@ -324,6 +427,51 @@ function DocumentRow({
               + New version
             </Btn>
           )}
+
+          <p className="label-mono mb-1.5">attached files</p>
+          {(doc.files ?? []).length > 0 && (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {(doc.files ?? []).map((f) => (
+                <div key={f.name} className="flex items-center gap-2.5 text-[12.5px]">
+                  <Paperclip size={12} className="shrink-0 text-low" />
+                  <a
+                    href={documentsApi.fileUrl(doc.id, f.name)}
+                    download={f.name}
+                    className="flex min-w-0 items-center gap-1.5 text-mid hover:text-hi"
+                  >
+                    <span className="truncate">{f.name}</span>
+                    <Download size={11} className="shrink-0" />
+                  </a>
+                  <Mono className="ml-auto shrink-0 text-low">{(f.size / 1024).toFixed(0)} KB</Mono>
+                  <button
+                    onClick={() => clickRemoveFile(f.name)}
+                    className={`flex shrink-0 items-center gap-1 ${
+                      confirmDeleteFile === f.name ? 'text-fail' : 'text-low hover:text-fail'
+                    }`}
+                  >
+                    <Trash2 size={12} />
+                    {confirmDeleteFile === f.name && <span className="text-[11px]">Sure?</span>}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) void uploadFile(f)
+              e.target.value = ''
+            }}
+          />
+          <div className="mb-4 flex items-center gap-3">
+            <Btn kind="quiet" onClick={() => fileInputRef.current?.click()}>
+              <span className="flex items-center gap-1.5"><Paperclip size={12} /> Attach file</span>
+            </Btn>
+            {fileNote && <span className="text-[12px] text-low">{fileNote}</span>}
+          </div>
 
           <p className="label-mono mb-1.5">tags</p>
           <input

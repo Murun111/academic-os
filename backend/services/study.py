@@ -226,8 +226,6 @@ class StudyService:
         items: list[dict] = []
 
         for t in self._read_all():
-            if t.done:
-                continue
             candidate_dates = [d for d in (t.day, t.due) if d]
             in_window = False
             for d in candidate_dates:
@@ -246,7 +244,8 @@ class StudyService:
                     "id": t.id,
                     "title": t.title,
                     "date": sort_date,
-                    "meta": {"priority": t.priority, "day": t.day, "due": t.due},
+                    "meta": {"priority": t.priority, "day": t.day, "due": t.due,
+                             "done": t.done},
                 }
             )
 

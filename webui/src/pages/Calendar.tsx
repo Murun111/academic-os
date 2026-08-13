@@ -16,6 +16,7 @@ interface CalItem {
   kind: 'application' | 'assignment' | 'task' | 'exam'
   title: string
   done?: boolean
+  id: string // record id (empty for the synthetic exam item)
   to: string // page that owns this item
 }
 
@@ -47,6 +48,7 @@ export function Calendar() {
   const today = new Date()
   const [anchor, setAnchor] = useState(new Date(today.getFullYear(), today.getMonth(), 1))
   const [items, setItems] = useState<CalItem[]>([])
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     void Promise.all([
@@ -58,16 +60,16 @@ export function Calendar() {
       const archivedCourses = new Set(courseList.courses.filter((c) => c.archived).map((c) => c.id))
       const all: CalItem[] = []
       for (const a of apps as Application[]) {
-        if (a.deadline && !a.archived) all.push({ date: a.deadline, kind: 'application', title: a.name, to: '/applications' })
+        if (a.deadline && !a.archived) all.push({ date: a.deadline, kind: 'application', title: a.name, id: a.id, to: `/applications?open=${a.id}` })
       }
       for (const x of assignments.assignments) {
-        if (x.due && !archivedCourses.has(x.course_id)) all.push({ date: x.due, kind: 'assignment', title: x.title, done: x.status === 'done', to: '/courses' })
+        if (x.due && !archivedCourses.has(x.course_id)) all.push({ date: x.due, kind: 'assignment', title: x.title, done: x.status === 'done', id: x.id, to: `/courses?open=${x.course_id}` })
       }
       for (const t of tasks as Task[]) {
-        if (t.day) all.push({ date: t.day, kind: 'task', title: t.title, done: t.done, to: '/study' })
+        if (t.day) all.push({ date: t.day, kind: 'task', title: t.title, done: t.done, id: t.id, to: '/study' })
       }
       if (trackCfg?.exam && testDate) {
-        all.push({ date: testDate, kind: 'exam', title: `${trackCfg.exam} exam`, to: '/settings' })
+        all.push({ date: testDate, kind: 'exam', title: `${trackCfg.exam} exam`, id: '', to: '/settings' })
       }
       setItems(all)
     })
@@ -98,6 +100,13 @@ export function Calendar() {
   const todayIso = iso(today)
   const monthLabel = anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const move = (delta: number) => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1))
+  const toggleDay = (date: string) =>
+    setExpandedDays((prev) => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -123,6 +132,8 @@ export function Calendar() {
           {cells.map((c) => {
             const dayItems = byDate.get(c.date) ?? []
             const isToday = c.date === todayIso
+            const isExpanded = expandedDays.has(c.date)
+            const visibleItems = isExpanded ? dayItems : dayItems.slice(0, 3)
             return (
               <div
                 key={c.date}
@@ -130,7 +141,7 @@ export function Calendar() {
               >
                 <Mono className={`block px-0.5 ${isToday ? 'text-hi' : 'text-low'}`}>{c.day}</Mono>
                 <div className="mt-0.5 flex flex-col gap-0.5">
-                  {dayItems.slice(0, 3).map((it, n) => (
+                  {visibleItems.map((it, n) => (
                     <button
                       key={n}
                       onClick={() => navigate(it.to)}
@@ -144,7 +155,12 @@ export function Calendar() {
                     </button>
                   ))}
                   {dayItems.length > 3 && (
-                    <Mono className="px-1 text-low">+{dayItems.length - 3} more</Mono>
+                    <button
+                      onClick={() => toggleDay(c.date)}
+                      className="px-1 text-left font-mono text-[11px] text-low hover:text-mid"
+                    >
+                      {isExpanded ? 'show less' : `+${dayItems.length - 3} more`}
+                    </button>
                   )}
                 </div>
               </div>

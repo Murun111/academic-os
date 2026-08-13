@@ -10,11 +10,15 @@ export function LocalAiPanel() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const poll = useRef<number | null>(null)
+  const startPoll = useRef<number | null>(null)
 
   const refresh = async () => setS(await localaiApi.status())
   useEffect(() => {
     void refresh()
-    return () => { if (poll.current) window.clearInterval(poll.current) }
+    return () => {
+      if (poll.current) window.clearInterval(poll.current)
+      if (startPoll.current) window.clearInterval(startPoll.current)
+    }
   }, [])
 
   // poll while a download is running
@@ -39,11 +43,35 @@ export function LocalAiPanel() {
 
   const start = async () => {
     setBusy(true)
-    setNote('Starting local AI (first start loads the model — up to a minute)…')
+    setNote('Loading the model…')
     const ok = await localaiApi.start()
-    setNote(ok ? 'Local AI running.' : 'Could not start — see status below.')
-    await refresh()
-    setBusy(false)
+    if (!ok) {
+      setNote('Could not start — see status below.')
+      await refresh()
+      setBusy(false)
+      return
+    }
+    // /start returns immediately; poll status until the server is healthy.
+    const deadline = Date.now() + 120_000
+    if (startPoll.current) window.clearInterval(startPoll.current)
+    startPoll.current = window.setInterval(() => {
+      void (async () => {
+        const next = await localaiApi.status()
+        setS(next)
+        if (next.running) {
+          setNote('Local AI running.')
+        } else if (Date.now() < deadline) {
+          return // keep polling, stay busy
+        } else {
+          setNote('Still loading — this can take a minute on first start. Check back shortly.')
+        }
+        if (startPoll.current) {
+          window.clearInterval(startPoll.current)
+          startPoll.current = null
+        }
+        setBusy(false)
+      })()
+    }, 2000)
   }
 
   const stopServer = async () => {
@@ -54,7 +82,16 @@ export function LocalAiPanel() {
     setBusy(false)
   }
 
-  if (!s) return null
+  if (!s) {
+    return (
+      <Panel className="mb-6">
+        <PanelHead label="local ai" />
+        <div className="px-5 pb-4">
+          <p className="text-[12.5px] text-mid">Checking local AI status…</p>
+        </div>
+      </Panel>
+    )
+  }
   const dl = s.download
   const downloading = !!dl && !dl.done && !dl.error
 

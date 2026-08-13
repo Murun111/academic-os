@@ -13,13 +13,48 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 # Persistent allowlist — same file read by autonomy._persistent_allowlist()
-_ALLOW_FILE: Path = Path.home() / ".agentic-os" / "autonomy_allow.json"
+#
+# Test override: set to a Path to pin the file location. When None (normal
+# operation) it resolves inside the app data root — never a foreign dir.
+_ALLOW_FILE_OVERRIDE: Path | None = None
+
+# Fork-era location (~/.agentic-os/autonomy_allow.json) — read once for a
+# one-time migration into the app data root, then never touched again.
+_LEGACY_ALLOW_FILE: Path = Path.home() / ".agentic-os" / "autonomy_allow.json"
+
+
+def _allow_file() -> Path:
+    """Resolve the autonomy allowlist file path.
+
+    Order of resolution:
+    1. _ALLOW_FILE_OVERRIDE (test hook)
+    2. <data root>/data/autonomy_allow.json, via backend.vault.agentic_os_dir()
+
+    One-time migration: if the new file doesn't exist yet but the legacy
+    fork-era file does, copy it over (never delete the legacy file).
+    """
+    if _ALLOW_FILE_OVERRIDE is not None:
+        return Path(_ALLOW_FILE_OVERRIDE)
+
+    from backend.vault import agentic_os_dir
+
+    path = agentic_os_dir() / "data" / "autonomy_allow.json"
+
+    if not path.exists() and _LEGACY_ALLOW_FILE.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(_LEGACY_ALLOW_FILE.read_bytes())
+        except OSError:
+            pass  # best-effort — normal write path below still creates the file
+
+    return path
 
 # Matches the YAML frontmatter block (opening --- through the closing ---)
 _FM_RE = re.compile(r"^---\n(.*?)^---[ \t]*\n?", re.DOTALL | re.MULTILINE)
@@ -133,7 +168,7 @@ async def autonomy_allow(tool: str) -> dict:
     current full allowlist.  Never raises.
     """
     try:
-        allow_path = _ALLOW_FILE
+        allow_path = _allow_file()
         allow_path.parent.mkdir(parents=True, exist_ok=True)
 
         if allow_path.exists():
@@ -148,7 +183,9 @@ async def autonomy_allow(tool: str) -> dict:
 
         if tool not in current:
             current.append(tool)
-            allow_path.write_text(json.dumps(current))
+            tmp = allow_path.with_name(f".{allow_path.name}.tmp")
+            tmp.write_text(json.dumps(current))
+            os.replace(tmp, allow_path)
 
         return {"ok": True, "allowlist": current}
 

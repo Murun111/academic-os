@@ -12,10 +12,26 @@ URL="http://127.0.0.1:$PORT"
 echo "── Academic OS ──────────────────────────────"
 
 # Already running? Just open the browser.
-if curl -s --max-time 2 "$URL/health" | grep -q '"ok"'; then
-  echo "Already running — opening $URL"
-  open "$URL"
-  exit 0
+health_response=$(curl -s --max-time 2 "$URL/health" 2>/dev/null || true)
+
+if echo "$health_response" | grep -q '"ok"'; then
+  # Health endpoint responds — verify the uvicorn process is actually running.
+  if pgrep -f "uvicorn backend.app:app" >/dev/null; then
+    echo "Already running — opening $URL"
+    open "$URL"
+    exit 0
+  else
+    # Port is responding but no uvicorn process exists: another app owns the port.
+    echo "⚠ Port $PORT is responding, but the Academic OS server isn't running."
+    echo "Another program owns this port. Try quitting it and run this again."
+    read -r -p "Press Enter to close."
+    exit 1
+  fi
+elif [ -n "$health_response" ]; then
+  # Port is open but responds with something other than {"ok"}.
+  echo "Port $PORT is in use by another app — quit it and try again."
+  read -r -p "Press Enter to close."
+  exit 1
 fi
 
 # First-run: create the Python environment.

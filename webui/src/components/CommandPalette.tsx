@@ -7,15 +7,26 @@ import {
 } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { Kbd } from './ui'
+import { applicationsApi, type Application } from '../lib/applicationsApi'
+import { coursesApi, type Course } from '../lib/coursesApi'
+import { documentsApi, type Document } from '../lib/documentsApi'
 
 interface Cmd {
   id: string
-  group: 'Go to' | 'Run agent' | 'Approvals'
+  group: 'Go to' | 'Run agent' | 'Approvals' | 'Applications' | 'Courses' | 'Documents'
   label: string
   hint?: string
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>
   action: () => void
 }
+
+interface SearchData {
+  applications: Application[]
+  courses: Course[]
+  documents: Document[]
+}
+
+const EMPTY_SEARCH_DATA: SearchData = { applications: [], courses: [], documents: [] }
 
 export function CommandPalette() {
   const open = useOs((s) => s.paletteOpen)
@@ -28,6 +39,7 @@ export function CommandPalette() {
 
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
+  const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -47,6 +59,21 @@ export function CommandPalette() {
       setQuery('')
       setActive(0)
       setTimeout(() => inputRef.current?.focus(), 30)
+    }
+  }, [open])
+
+  // fetch searchable data once per palette-open, not on every keystroke
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    Promise.all([applicationsApi.list(), coursesApi.listCourses(), documentsApi.list()]).then(
+      ([applications, coursesRes, documents]) => {
+        if (cancelled) return
+        setSearchData({ applications, courses: coursesRes.courses, documents })
+      },
+    )
+    return () => {
+      cancelled = true
     }
   }, [open])
 
@@ -75,11 +102,41 @@ export function CommandPalette() {
     return [...nav, ...run, ...appr]
   }, [agents, approvals, navigate, runAgent, decide])
 
+  const searchGroups = useMemo<Cmd[]>(() => {
+    const n = query.trim().toLowerCase()
+    if (!n) return []
+    const apps: Cmd[] = searchData.applications
+      .filter((a) => a.name.toLowerCase().includes(n) || a.org.toLowerCase().includes(n))
+      .slice(0, 6)
+      .map((a) => ({
+        id: `sr-app-${a.id}`, group: 'Applications', label: a.name, hint: a.org,
+        icon: GraduationCap, action: () => navigate(`/applications?open=${a.id}`),
+      }))
+    const courses: Cmd[] = searchData.courses
+      .filter((c) => c.name.toLowerCase().includes(n))
+      .slice(0, 6)
+      .map((c) => ({
+        id: `sr-course-${c.id}`, group: 'Courses', label: c.name, hint: c.term,
+        icon: BookOpen, action: () => navigate(`/courses?open=${c.id}`),
+      }))
+    const docs: Cmd[] = searchData.documents
+      .filter((d) => d.title.toLowerCase().includes(n))
+      .slice(0, 6)
+      .map((d) => ({
+        id: `sr-doc-${d.id}`, group: 'Documents', label: d.title, hint: d.kind,
+        icon: Files, action: () => navigate('/documents'),
+      }))
+    return [...apps, ...courses, ...docs]
+  }, [query, searchData, navigate])
+
   const filtered = useMemo(() => {
     if (!query.trim()) return commands
     const n = query.toLowerCase()
-    return commands.filter((c) => (c.label + ' ' + c.group + ' ' + (c.hint ?? '')).toLowerCase().includes(n))
-  }, [commands, query])
+    const staticMatches = commands.filter((c) =>
+      (c.label + ' ' + c.group + ' ' + (c.hint ?? '')).toLowerCase().includes(n),
+    )
+    return [...staticMatches, ...searchGroups]
+  }, [commands, query, searchGroups])
 
   const pick = (c: Cmd) => {
     setOpen(false)

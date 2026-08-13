@@ -1,200 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import {
   coursesApi, gradeTone,
   type Assignment, type AssignmentStatus, type CourseSummary,
 } from '../lib/coursesApi'
-import { DEFAULT_CREDITS, neededOnFinal, termGpa, toLetter } from '../lib/gpa'
+import { DEFAULT_CREDITS } from '../lib/gpa'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
+import { GpaPanel, WhatIf } from '../components/GpaPanel'
+import {
+  AddAssignmentForm, AddCourseForm, AssignmentRow, ConfirmDelete, EditText,
+} from '../components/CourseRows'
+
+const ASSIGNMENT_FILTERS = ['all', 'open'] as const
+type AssignmentFilter = (typeof ASSIGNMENT_FILTERS)[number]
 
 function fmtGrade(grade: number | null): string {
   return grade == null ? '—' : `${grade.toFixed(1)}%`
-}
-
-function GpaPanel({ courses }: { courses: CourseSummary[] }) {
-  const { gpa, graded } = termGpa(courses)
-  if (gpa == null) return null
-  const hasBlankCredits = courses.some((c) => c.grade != null && c.credits == null)
-  return (
-    <Panel className="mb-6">
-      <PanelHead label="term gpa" />
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 pb-4">
-        <span className="text-[32px] font-semibold tracking-[-0.02em] text-hi">{gpa.toFixed(2)}</span>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {courses.filter((c) => c.grade != null).map((c) => {
-            const gp = toLetter(c.grade as number)
-            return (
-              <span key={c.id} className="text-[12.5px] text-mid">
-                {c.name} <Mono className="text-low">{gp.letter} · {gp.points.toFixed(1)}</Mono>
-              </span>
-            )
-          })}
-        </div>
-      </div>
-      <p className="px-5 pb-3 text-[11.5px] text-low">
-        {graded} of {courses.length} courses graded, weighted by credit hours
-        {hasBlankCredits ? ` (blank credits count as ${DEFAULT_CREDITS})` : ''}.
-      </p>
-    </Panel>
-  )
-}
-
-function WhatIf({ current }: { current: number }) {
-  const [worth, setWorth] = useState('')
-  const [target, setTarget] = useState('')
-  const w = Number(worth)
-  const t = Number(target)
-  const valid = worth.trim() !== '' && target.trim() !== '' && !Number.isNaN(w) && !Number.isNaN(t)
-  const needed = valid ? neededOnFinal(current, w, t) : null
-
-  let verdict = ''
-  if (valid && needed != null) {
-    if (needed <= 0) verdict = `Already secured — even a 0 on the final keeps ${t}%.`
-    else if (needed > 100) verdict = `Not reachable with the final alone (needs ${needed.toFixed(1)}%).`
-    else verdict = `Need ${needed.toFixed(1)}% on the final.`
-  }
-
-  return (
-    <div className="mt-3 rounded-lg border border-line bg-raise2 px-3 py-2.5">
-      <p className="label-mono mb-1.5">what do i need on the final?</p>
-      <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-mid">
-        <span>Final is worth</span>
-        <input
-          value={worth}
-          onChange={(e) => setWorth(e.target.value)}
-          placeholder="30"
-          className="w-[48px] rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
-        />
-        <span>% of the grade, and I want</span>
-        <input
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          placeholder="90"
-          className="w-[48px] rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
-        />
-        <span>% overall.</span>
-      </div>
-      {verdict && <p className="mt-1.5 text-[12.5px] text-hi">{verdict}</p>}
-    </div>
-  )
-}
-
-function AddCourseForm({ onAdd, onCancel }: { onAdd: (name: string, term: string, instructor: string) => void; onCancel: () => void }) {
-  const [name, setName] = useState('')
-  const [term, setTerm] = useState('')
-  const [instructor, setInstructor] = useState('')
-  return (
-    <div className="flex flex-wrap items-center gap-2 px-5 pb-4">
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Course name"
-        className="min-w-[160px] flex-1 rounded-lg border border-line bg-raise2 px-2.5 py-1.5 text-[13px] text-hi outline-none placeholder:text-low"
-      />
-      <input
-        value={term}
-        onChange={(e) => setTerm(e.target.value)}
-        placeholder="Term, e.g. Fall 2026"
-        className="w-[160px] rounded-lg border border-line bg-raise2 px-2.5 py-1.5 text-[13px] text-hi outline-none placeholder:text-low"
-      />
-      <input
-        value={instructor}
-        onChange={(e) => setInstructor(e.target.value)}
-        placeholder="Instructor (optional)"
-        className="w-[160px] rounded-lg border border-line bg-raise2 px-2.5 py-1.5 text-[13px] text-hi outline-none placeholder:text-low"
-      />
-      <Btn
-        kind="primary"
-        onClick={() => {
-          if (!name.trim() || !term.trim()) return
-          onAdd(name.trim(), term.trim(), instructor.trim())
-        }}
-      >
-        Add
-      </Btn>
-      <Btn onClick={onCancel}><X size={14} /></Btn>
-    </div>
-  )
-}
-
-function AddAssignmentForm({ onAdd, onCancel }: { onAdd: (title: string, due: string) => void; onCancel: () => void }) {
-  const [title, setTitle] = useState('')
-  const [due, setDue] = useState('')
-  return (
-    <div className="flex flex-wrap items-center gap-2 py-2">
-      <input
-        autoFocus
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Assignment title"
-        className="min-w-[160px] flex-1 rounded-lg border border-line bg-raise2 px-2.5 py-1.5 text-[13px] text-hi outline-none placeholder:text-low"
-      />
-      <input
-        type="date"
-        value={due}
-        onChange={(e) => setDue(e.target.value)}
-        className="rounded-lg border border-line bg-raise2 px-2.5 py-1.5 text-[13px] text-hi outline-none"
-      />
-      <Btn
-        kind="primary"
-        onClick={() => {
-          if (!title.trim()) return
-          onAdd(title.trim(), due)
-        }}
-      >
-        Add
-      </Btn>
-      <Btn onClick={onCancel}><X size={14} /></Btn>
-    </div>
-  )
-}
-
-function AssignmentRow({
-  a, courseName, onToggleStatus, onGradeCommit, onDelete,
-}: {
-  a: Assignment
-  courseName?: string
-  onToggleStatus: (a: Assignment) => void
-  onGradeCommit: (a: Assignment, grade: number | null) => void
-  onDelete: (a: Assignment) => void
-}) {
-  const [gradeDraft, setGradeDraft] = useState(a.grade == null ? '' : String(a.grade))
-  useEffect(() => setGradeDraft(a.grade == null ? '' : String(a.grade)), [a.grade])
-
-  return (
-    <div className="flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-ink/4">
-      <button
-        onClick={() => onToggleStatus(a)}
-        className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10.5px] transition-colors duration-150 ${
-          a.status === 'done'
-            ? 'border-run/30 text-run'
-            : 'border-line text-low hover:text-mid'
-        }`}
-      >
-        {a.status}
-      </button>
-      <span className="flex-1 truncate text-[13px] text-mid">{a.title}</span>
-      {courseName && <Mono className="hidden shrink-0 text-low sm:block">{courseName}</Mono>}
-      <Mono className="w-[76px] shrink-0 text-right text-low">{a.due ?? '—'}</Mono>
-      <input
-        value={gradeDraft}
-        onChange={(e) => setGradeDraft(e.target.value)}
-        onBlur={() => {
-          const trimmed = gradeDraft.trim()
-          const parsed = trimmed === '' ? null : Number(trimmed)
-          const next = parsed === null || Number.isNaN(parsed) ? null : parsed
-          if (next !== a.grade) onGradeCommit(a, next)
-        }}
-        placeholder="grade"
-        className="w-[56px] shrink-0 rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
-      />
-      <button onClick={() => onDelete(a)} className="shrink-0 text-low hover:text-fail">
-        <Trash2 size={13} />
-      </button>
-    </div>
-  )
 }
 
 export function Courses() {
@@ -205,6 +27,10 @@ export function Courses() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [showAddCourse, setShowAddCourse] = useState(false)
   const [addingAssignmentFor, setAddingAssignmentFor] = useState<string | null>(null)
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all')
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const [searchParams] = useSearchParams()
+  const deepLinked = useRef(false)
 
   const load = useCallback(async () => {
     const s = await coursesApi.summary()
@@ -220,16 +46,35 @@ export function Courses() {
     setAssignments(r.assignments)
   }, [])
 
+  // Open a course and bring its card into view — used by the due-soon strip
+  // and by the ?open=<courseId> deep link other pages navigate with.
+  const openCourse = useCallback((courseId: string) => {
+    setExpanded(courseId)
+    setAddingAssignmentFor(null)
+    setAssignmentFilter('all')
+    void loadAssignments(courseId)
+    requestAnimationFrame(() => {
+      cardRefs.current[courseId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [loadAssignments])
+
   const toggleExpand = (courseId: string) => {
     if (expanded === courseId) {
       setExpanded(null)
       setAssignments([])
       return
     }
-    setExpanded(courseId)
-    setAddingAssignmentFor(null)
-    void loadAssignments(courseId)
+    openCourse(courseId)
   }
+
+  // Deep link: expand once, after the first load has confirmed the id exists.
+  const openParam = searchParams.get('open')
+  useEffect(() => {
+    if (deepLinked.current || loading || !openParam) return
+    if (!courses.some((c) => c.id === openParam)) return
+    deepLinked.current = true
+    openCourse(openParam)
+  }, [courses, loading, openParam, openCourse])
 
   const addCourse = async (name: string, term: string, instructor: string) => {
     await coursesApi.addCourse({ name, term, instructor })
@@ -263,6 +108,18 @@ export function Courses() {
     void load()
   }
 
+  const commitAssignmentTitle = async (a: Assignment, title: string) => {
+    await coursesApi.updateAssignment(a.id, { title })
+    void loadAssignments(a.course_id)
+    void load()
+  }
+
+  const commitAssignmentDue = async (a: Assignment, due: string | null) => {
+    await coursesApi.updateAssignment(a.id, { due })
+    void loadAssignments(a.course_id)
+    void load()
+  }
+
   const deleteAssignment = async (a: Assignment) => {
     await coursesApi.deleteAssignment(a.id)
     void loadAssignments(a.course_id)
@@ -277,16 +134,26 @@ export function Courses() {
     void load()
   }
 
+  const commitCourseField = async (
+    courseId: string,
+    fields: { name?: string; term?: string; instructor?: string; credits?: number | null },
+  ) => {
+    await coursesApi.updateCourse(courseId, fields)
+    void load()
+  }
+
   const commitCredits = async (courseId: string, raw: string) => {
     const trimmed = raw.trim()
     const parsed = trimmed === '' ? null : Number(trimmed)
     const credits = parsed === null || Number.isNaN(parsed) ? null : parsed
-    await coursesApi.updateCourse(courseId, { credits })
-    void load()
+    await commitCourseField(courseId, { credits })
   }
 
   const active = courses.filter((c) => !c.archived)
   const archived = courses.filter((c) => c.archived)
+  const shownAssignments = assignmentFilter === 'open'
+    ? assignments.filter((a) => a.status !== 'done')
+    : assignments
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -300,7 +167,7 @@ export function Courses() {
         </Btn>
       </div>
 
-      <GpaPanel courses={active} />
+      <GpaPanel courses={active} allCourses={courses} />
 
       {/* due soon strip */}
       <Panel className="mb-6">
@@ -308,11 +175,16 @@ export function Courses() {
         <div className="flex flex-col gap-px px-2 pb-3">
           {dueSoon.length === 0 && <EmptyState title="Nothing due soon." />}
           {dueSoon.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 rounded-[10px] px-3 py-2">
+            <button
+              key={a.id}
+              onClick={() => openCourse(a.course_id)}
+              title="Open this course"
+              className="flex items-center gap-3 rounded-[10px] px-3 py-2 text-left transition-colors duration-150 hover:bg-ink/4"
+            >
               <span className="flex-1 truncate text-[13px] text-mid">{a.title}</span>
               <Mono className="text-low">{courseNameById(a.course_id) ?? ''}</Mono>
               <Mono className="w-[76px] text-right text-hi">{a.due}</Mono>
-            </div>
+            </button>
           ))}
         </div>
       </Panel>
@@ -332,7 +204,11 @@ export function Courses() {
 
       <div className="flex flex-col gap-2">
         {active.map((c) => (
-            <div key={c.id} className="panel overflow-hidden">
+            <div
+              key={c.id}
+              ref={(el) => { cardRefs.current[c.id] = el }}
+              className="panel overflow-hidden scroll-mt-6"
+            >
               <button
                 onClick={() => toggleExpand(c.id)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-raise2"
@@ -344,16 +220,35 @@ export function Courses() {
                 </div>
                 <Pill tone={gradeTone(c.grade)}>{fmtGrade(c.grade)}</Pill>
                 <Mono className="w-[90px] shrink-0 text-right text-low">{c.open_assignments} open</Mono>
-                <button
-                  onClick={(e) => { e.stopPropagation(); void deleteCourse(c.id) }}
-                  className="shrink-0 text-low hover:text-fail"
-                >
-                  <Trash2 size={13} />
-                </button>
+                <ConfirmDelete onConfirm={() => void deleteCourse(c.id)} label={`Delete ${c.name}`} />
               </button>
 
               {expanded === c.id && (
                 <div className="border-t border-hairline px-4 py-3">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <EditText
+                      value={c.name}
+                      onCommit={(v) => void commitCourseField(c.id, { name: v })}
+                      placeholder="Course name"
+                      ariaLabel="Course name"
+                      className="w-[200px] text-[12.5px]"
+                    />
+                    <EditText
+                      value={c.term}
+                      onCommit={(v) => void commitCourseField(c.id, { term: v })}
+                      placeholder="Term, e.g. Fall 2026"
+                      ariaLabel="Term"
+                      className="w-[140px] font-mono"
+                    />
+                    <EditText
+                      value={c.instructor}
+                      onCommit={(v) => void commitCourseField(c.id, { instructor: v })}
+                      placeholder="Instructor"
+                      ariaLabel="Instructor"
+                      allowEmpty
+                      className="w-[150px] font-mono"
+                    />
+                  </div>
                   <div className="mb-2 flex flex-wrap items-center gap-3 text-[12.5px] text-mid">
                     <label className="flex items-center gap-1.5">
                       credit hours
@@ -372,15 +267,37 @@ export function Courses() {
                     </button>
                   </div>
                   {c.grade != null && <WhatIf current={c.grade} />}
-                  <div className="mt-3 flex flex-col gap-px">
-                    {assignments.length === 0 && addingAssignmentFor !== c.id && (
-                      <EmptyState title="No assignments yet." />
+                  <div className="mt-3 flex items-center gap-1.5">
+                    <span className="label-mono">assignments</span>
+                    {ASSIGNMENT_FILTERS.map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setAssignmentFilter(f)}
+                        className={`rounded-full border px-2 py-0.5 font-mono text-[10.5px] transition-colors duration-150 ${
+                          assignmentFilter === f
+                            ? 'border-line text-hi'
+                            : 'border-transparent text-low hover:text-mid'
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1 flex flex-col gap-px">
+                    {shownAssignments.length === 0 && addingAssignmentFor !== c.id && (
+                      <EmptyState
+                        title={assignmentFilter === 'open' && assignments.length > 0
+                          ? 'Nothing open — everything here is done.'
+                          : 'No assignments yet.'}
+                      />
                     )}
-                    {assignments.map((a) => (
+                    {shownAssignments.map((a) => (
                       <AssignmentRow
                         key={a.id}
                         a={a}
                         onToggleStatus={(x) => void toggleAssignmentStatus(x)}
+                        onTitleCommit={(x, t) => void commitAssignmentTitle(x, t)}
+                        onDueCommit={(x, d) => void commitAssignmentDue(x, d)}
                         onGradeCommit={(x, g) => void commitGrade(x, g)}
                         onDelete={(x) => void deleteAssignment(x)}
                       />

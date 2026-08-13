@@ -6,6 +6,9 @@ All tests are OFFLINE:
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from backend.services.autonomy import GateDecision, classify
@@ -316,3 +319,47 @@ def test_code_task_gates_as_outward_proactive() -> None:
 
 def test_code_task_gates_as_outward_observe() -> None:
     _check(classify("code.task", posture="observe"), "gate", "outward")
+
+
+# ── _allow_path: one-time migration from the legacy fork location ─────────────
+
+def test_allow_path_migrates_legacy_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When no new-location file exists yet but the legacy ~/.agentic-os one
+    does, _allow_path() copies it into the data root and leaves the legacy
+    file in place."""
+    import backend.services.autonomy as autonomy_mod
+
+    data_root = tmp_path / "data-root"
+    legacy = tmp_path / "home" / ".agentic-os" / "autonomy_allow.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps(["legacy.tool"]))
+
+    monkeypatch.setattr("backend.vault.resolve_vault_path", lambda: data_root)
+    monkeypatch.setattr(autonomy_mod, "_LEGACY_ALLOW_PATH", legacy)
+
+    resolved = autonomy_mod._allow_path()
+
+    assert resolved == data_root / "data" / "autonomy_allow.json"
+    assert resolved.exists()
+    assert json.loads(resolved.read_text()) == ["legacy.tool"]
+    assert legacy.exists()  # never deleted
+
+
+def test_persistent_allowlist_reads_migrated_legacy_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: _persistent_allowlist() picks up tools from a legacy file
+    that has never been copied to the new location yet."""
+    import backend.services.autonomy as autonomy_mod
+
+    data_root = tmp_path / "data-root"
+    legacy = tmp_path / "home" / ".agentic-os" / "autonomy_allow.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps(["legacy.tool"]))
+
+    monkeypatch.setattr("backend.vault.resolve_vault_path", lambda: data_root)
+    monkeypatch.setattr(autonomy_mod, "_LEGACY_ALLOW_PATH", legacy)
+
+    assert autonomy_mod._persistent_allowlist() == {"legacy.tool"}

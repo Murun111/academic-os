@@ -1,4 +1,8 @@
 """Tests for the Canvas REST connector."""
+import asyncio
+import json
+
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -112,6 +116,81 @@ async def test_sync_without_credentials_reports_error(tmp_path, monkeypatch):
     assert result["errors"] and result["errors"][0]["scope"] == "config"
 
 
+class RaisingClient:
+    """Fake httpx.AsyncClient that raises a given exception on the first get."""
+    def __init__(self, exc): self._exc = exc
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+    async def get(self, url, params=None): raise self._exc
+
+
+def _svc(tmp_path):
+    canvas = CanvasSyncService(data_dir=tmp_path / "c")
+    courses = CoursesService(data_dir=tmp_path / "k")
+    canvas.set_credentials("https://school.instructure.com", "tok_1234567890")
+    return canvas, courses
+
+
+@pytest.mark.asyncio
+async def test_sync_classifies_auth_error(tmp_path, monkeypatch):
+    req = httpx.Request("GET", "https://school.instructure.com/api/v1/courses")
+    exc = httpx.HTTPStatusError("unauthorized", request=req,
+                                 response=httpx.Response(401, request=req))
+    monkeypatch.setattr("backend.services.canvas_sync.httpx.AsyncClient",
+                         lambda *a, **kw: RaisingClient(exc))
+    canvas, courses = _svc(tmp_path)
+    result = await canvas.sync(courses)
+    assert result["error_kind"] == "auth_error"
+    assert result["errors"][0]["kind"] == "auth_error"
+
+
+@pytest.mark.asyncio
+async def test_sync_classifies_network_error(tmp_path, monkeypatch):
+    monkeypatch.setattr("backend.services.canvas_sync.httpx.AsyncClient",
+                         lambda *a, **kw: RaisingClient(httpx.ConnectError("boom")))
+    canvas, courses = _svc(tmp_path)
+    result = await canvas.sync(courses)
+    assert result["error_kind"] == "network_error"
+
+
+@pytest.mark.asyncio
+async def test_sync_classifies_other_canvas_error(tmp_path, monkeypatch):
+    req = httpx.Request("GET", "https://school.instructure.com/api/v1/courses")
+    exc = httpx.HTTPStatusError("server error", request=req,
+                                 response=httpx.Response(500, request=req))
+    monkeypatch.setattr("backend.services.canvas_sync.httpx.AsyncClient",
+                         lambda *a, **kw: RaisingClient(exc))
+    canvas, courses = _svc(tmp_path)
+    result = await canvas.sync(courses)
+    assert result["error_kind"] == "canvas_error"
+
+
+@pytest.mark.asyncio
+async def test_sync_deadline_times_out(tmp_path, monkeypatch):
+    class HangingClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, params=None):
+            await asyncio.sleep(10)
+
+    monkeypatch.setattr("backend.services.canvas_sync.httpx.AsyncClient", HangingClient)
+    monkeypatch.setattr("backend.services.canvas_sync.SYNC_TIMEOUT_SECONDS", 0.05)
+    canvas, courses = _svc(tmp_path)
+    result = await canvas.sync(courses)
+    assert result["error_kind"] == "network_error"
+
+
+def test_sync_saves_atomically(tmp_path):
+    """_save writes via tmp+replace — no leftover .tmp files, no half-written json."""
+    canvas = CanvasSyncService(data_dir=tmp_path / "c")
+    canvas.set_credentials("https://school.instructure.com", "tok_1234567890")
+    leftovers = list((tmp_path / "c").glob("*.tmp"))
+    assert leftovers == []
+    assert json.loads((tmp_path / "c" / "canvas.json").read_text())["base_url"] == \
+        "https://school.instructure.com"
+
+
 # ── router ────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -132,16 +211,52 @@ def test_canvas_router_flow(client):
     r = client.post("/api/connectors/canvas",
                     json={"base_url": "https://school.instructure.com", "token": "tok_1234567890"})
     assert r.status_code == 200 and r.json()["connected"] is True
+    # Saving credentials fires an immediate background sync (asyncio.create_task)
+    # so the student sees courses without finding "Sync now" — by the time the
+    # TestClient's portal loop gets back here that sync has already landed, so
+    # the explicit sync below is a no-op re-sync (idempotent, no duplicates).
     r = client.post("/api/connectors/canvas/sync")
-    assert r.status_code == 200 and r.json()["created"] == 3
+    assert r.status_code == 200 and r.json()["created"] == 0 and r.json()["unchanged"] == 3
     r = client.post("/api/connectors/canvas/clear")
     assert r.json()["connected"] is False
+
+
+def test_sync_on_credential_save(client):
+    """The background sync triggered by saving credentials actually runs and
+    upserts courses, independent of the explicit /sync endpoint."""
+    client.post("/api/connectors/canvas",
+                json={"base_url": "https://school.instructure.com", "token": "tok_1234567890"})
+    status = client.get("/api/connectors/canvas").json()
+    assert status["last_result"] is not None
+    assert status["last_result"]["created"] == 3
 
 
 def test_canvas_router_rejects_short_token(client):
     r = client.post("/api/connectors/canvas",
                     json={"base_url": "https://school.instructure.com", "token": "abc"})
     assert r.status_code == 422
+
+
+def test_canvas_router_sync_maps_auth_error(monkeypatch, tmp_path):
+    """A 401 from Canvas surfaces as a non-2xx response with error: auth_error
+    so the frontend can show a specific message instead of a generic failure."""
+    req = httpx.Request("GET", "https://school.instructure.com/api/v1/courses")
+    exc = httpx.HTTPStatusError("unauthorized", request=req,
+                                 response=httpx.Response(401, request=req))
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    monkeypatch.setattr("backend.services.canvas_sync.httpx.AsyncClient",
+                         lambda *a, **kw: RaisingClient(exc))
+    reset_services()
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as c:
+        c.post("/api/connectors/canvas",
+               json={"base_url": "https://school.instructure.com", "token": "tok_1234567890"})
+        r = c.post("/api/connectors/canvas/sync")
+        assert r.status_code == 502
+        assert r.json()["error"] == "auth_error"
+        assert r.json()["status"] == 401
+    reset_services()
 
 
 @pytest.mark.asyncio

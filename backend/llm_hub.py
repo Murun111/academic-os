@@ -117,19 +117,24 @@ def _http_get_json(url: str, timeout: int = 3) -> dict | None:
         return None
 
 
-# House style for the bundled llama.cpp model. The small fallback model
-# (qwen2.5-0.5b) drifts into social-media voice — emoji, hashtags, stray
-# slashes — when handed a bare user turn with llama-server's default
-# sampling. This constrains voice; the sampling params below constrain
-# entropy. Neither substitutes for installing the 4B model.
-_BUNDLED_STYLE = (
+# House style for the Chat tab, applied by app.py to every backend.
+#
+# The Chat bubble renders message content as PLAIN TEXT — there is no markdown
+# parser in Chat.tsx. So a model emitting "### Tips" or "**bold**" puts literal
+# hashes and asterisks on screen. Qwen3 does this constantly. Both halves of the
+# rule matter: no markdown because nothing renders it, no emoji because this is
+# a planning tool and not a social feed.
+HOUSE_STYLE = (
     "You are the assistant inside Academic OS, a student planning app.\n"
-    "Write in plain, complete English sentences.\n"
-    "Never use emoji, hashtags, or decorative symbols.\n"
-    "Never emit stray punctuation, slashes, or code comments unless the user "
-    "asked for code.\n"
-    "Prefer two or three short sentences over a list. If you do not know "
-    "something, say so plainly in one sentence."
+    "Write in plain, complete English sentences and nothing else.\n"
+    "Your output is displayed as raw text with no markdown rendering. Never "
+    "use #, *, _, backticks, or --- for formatting. Never use headings, bold, "
+    "or horizontal rules.\n"
+    "Never use emoji, hashtags, arrows, or decorative symbols.\n"
+    "If you must enumerate, write '1.' at the start of a line and keep each "
+    "item to one sentence.\n"
+    "Keep answers under 120 words. If you do not know something, say so "
+    "plainly in one sentence rather than guessing."
 )
 
 
@@ -194,6 +199,20 @@ class OllamaBackend(Backend):
         try:
             with urllib.request.urlopen(req, timeout=self.chat_timeout) as r:
                 d = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            # Ollama IS running but rejected the request — almost always an
+            # unknown model name. HTTPError subclasses URLError, so without
+            # this clause it fell through to the bundled fallback below and
+            # silently answered from the 0.5B model instead. A quiet downgrade
+            # from qwen3:4b to a 0.5B reads as "the AI got stupid", with no
+            # error anywhere. Surface it.
+            try:
+                detail = e.read().decode()[:200].strip()
+            except Exception:
+                detail = ""
+            raise RuntimeError(
+                f"ollama rejected model {model!r} (HTTP {e.code}): {detail}"
+            ) from e
         except (urllib.error.URLError, ConnectionError):
             # Ollama not installed/running → bundled llama-server fallback,
             # same policy as OllamaService in backend/ollama.py.
@@ -215,14 +234,11 @@ class OllamaBackend(Backend):
             raise ConnectionError(
                 "no local AI: Ollama absent and bundled model not installed"
             )
-        # House style goes first so any recall context app.py prepended still
-        # reads as context rather than as the instruction of record.
+        # House style is injected by app.py so it applies to every backend, not
+        # just this one — do not re-add it here or it lands twice.
         payload = {
             "model": "local",
-            "messages": (
-                [{"role": "system", "content": _BUNDLED_STYLE}]
-                + [{"role": m.role, "content": m.content} for m in messages]
-            ),
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": False,
             # llama-server defaults (temp 0.8) are far too loose for a 0.5B model.
             "temperature": 0.3,

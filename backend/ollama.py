@@ -189,6 +189,14 @@ class OllamaService:
         except (httpx.ConnectError, httpx.ConnectTimeout):
             # Ollama not installed/running → bundled llama-server fallback.
             data = await self._local_fallback_chat(messages, tools)
+        except httpx.ReadTimeout:
+            # Ollama is up and accepted the request but took too long to
+            # respond. Do NOT silently switch models mid-request — that
+            # would return an answer from a different model than the caller
+            # asked for. Surface a clear, actionable error instead.
+            raise RuntimeError(
+                "the model took too long — try a shorter prompt or a smaller model"
+            )
         return ChatResponse(
             message=_parse_message(data),
             model=data.get("model", use_model),
@@ -243,11 +251,21 @@ class OllamaService:
             payload["tools"] = tools
         if think:
             payload["think"] = True
-        async with client.stream("POST", "/api/chat", json=payload) as r:
-            r.raise_for_status()
-            async for line in r.aiter_lines():
-                if line.strip():
-                    yield json.loads(line)
+        try:
+            async with client.stream("POST", "/api/chat", json=payload) as r:
+                r.raise_for_status()
+                async for line in r.aiter_lines():
+                    if line.strip():
+                        yield json.loads(line)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # No fallback for streaming (bundled llama-server doesn't stream
+            # in Ollama's NDJSON shape). Tell the SSE consumer plainly instead
+            # of raising through the generator, which would break the stream.
+            yield {
+                "message": {"role": "assistant", "content": ""},
+                "error": "no local AI: Ollama absent and bundled model not installed",
+                "done": True,
+            }
 
     @staticmethod
     def _serialize_message(m: ChatMessage) -> dict[str, Any]:

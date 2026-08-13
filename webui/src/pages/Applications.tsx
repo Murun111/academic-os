@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Archive, ArchiveRestore, ArrowLeft, ArrowRight, Calendar, Check, Landmark, Plus, Search, Trash2, X } from 'lucide-react'
-import { scoutApi } from '../lib/scoutApi'
+import { ArrowLeft, ArrowRight, Calendar, Landmark, Plus, Search } from 'lucide-react'
 import {
   applicationsApi, APPLICATION_STATUSES, APPLICATION_TYPES, requirementsProgress,
   type Application, type ApplicationCosts, type ApplicationStatus, type ApplicationType,
@@ -11,6 +10,8 @@ import { useOs } from '../lib/store'
 import { stageConfig } from '../lib/stageConfig'
 import { trackApplies, trackConfig } from '../lib/trackConfig'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
+import { ApplicationDrawer, DeadlineLabel, STATUS_LABEL } from '../components/ApplicationDrawer'
+import { createFafsa, FAFSA_STAGES, ScholarshipScout } from '../components/ScholarshipScout'
 
 // human labels for the type filter tabs
 const TYPE_LABEL: Record<ApplicationType, string> = {
@@ -20,91 +21,8 @@ const TYPE_LABEL: Record<ApplicationType, string> = {
   exchange: 'Exchange',
 }
 
-const STATUS_LABEL: Record<ApplicationStatus, string> = {
-  researching: 'Researching',
-  preparing: 'Preparing',
-  submitted: 'Submitted',
-  interview: 'Interview',
-  decision: 'Decision',
-}
-
-function daysUntil(deadline: string): number {
-  return Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000)
-}
-
-// ── Find-scholarships fill-in-the-blanks options ─────────────────────────────
-const STAGE_PHRASE: Record<string, string> = {
-  highschool: 'high school student',
-  undergrad: 'undergraduate student',
-  gapyear: 'college graduate on a gap year',
-  grad: 'graduate student',
-  beyond: 'graduate',
-}
-
-const MAJORS = [
-  'Computer Science', 'Engineering', 'Business', 'Biology / Pre-med',
-  'Nursing', 'Economics', 'Psychology', 'Arts & Design', 'Other…',
-]
-
-const IDENTITIES = [
-  'First-generation', 'Immigrant', 'Low-income', 'Woman in STEM',
-  'Underrepresented minority', 'International student', 'Veteran', 'Student with a disability',
-]
-
-const AMOUNTS = ['any amount', 'over $1,000', 'over $5,000', 'over $10,000']
-
-// ── FAFSA one-click card ─────────────────────────────────────────────────────
-const FAFSA_STAGES = new Set(['highschool', 'undergrad', 'gapyear'])
-
-const FAFSA_CHECKLIST = [
-  'Create your FSA ID at studentaid.gov',
-  'Parent / contributor creates their FSA ID',
-  'Gather tax returns and income info',
-  'List the schools that should receive your FAFSA',
-  'Submit the FAFSA',
-  'Check your confirmation and compare aid offers',
-]
-
-const FAFSA_NOTES =
-  'File as early as you can — some state and college aid is first-come, first-served. ' +
-  'June 30 is the FEDERAL deadline; most state deadlines are much earlier — check yours at ' +
-  'studentaid.gov. Filing is free. Anyone charging a fee to file it is a scam.'
-
-function nextJune30Iso(): string {
-  const now = new Date()
-  const thisYear = new Date(now.getFullYear(), 5, 30)
-  const d = now <= thisYear ? thisYear : new Date(now.getFullYear() + 1, 5, 30)
-  return `${d.getFullYear()}-06-30`
-}
-
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full border px-2.5 py-1 text-[12px] transition-colors duration-150 ${
-        active
-          ? 'border-ink/25 bg-ink/6 text-hi'
-          : 'border-line text-mid hover:border-ink/15 hover:text-hi'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
 function formatUsd(amount: number): string {
   return `$${Math.round(amount).toLocaleString()}`
-}
-
-function DeadlineLabel({ deadline }: { deadline: string | null }) {
-  if (!deadline) return null
-  const days = daysUntil(deadline)
-  const urgent = days < 7
-  return (
-    <Mono className={urgent ? 'text-fail' : 'text-low'}>
-      {deadline} · {days < 0 ? 'overdue' : `${days}d`}
-    </Mono>
-  )
 }
 
 export function Applications() {
@@ -121,93 +39,40 @@ export function Applications() {
   const [deadlines, setDeadlines] = useState<Application[]>([])
   const [costs, setCosts] = useState<ApplicationCosts | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [formName, setFormName] = useState('')
   const [formType, setFormType] = useState<ApplicationType>(cfg.defaultType)
   const [formDeadline, setFormDeadline] = useState('')
-  const [newReqLabel, setNewReqLabel] = useState('')
   const [busy, setBusy] = useState(false)
-  const [amountDraft, setAmountDraft] = useState('')
-  const [feeDraft, setFeeDraft] = useState('')
-  const [notesDraft, setNotesDraft] = useState('')
-  const [nameDraft, setNameDraft] = useState('')
-  const [orgDraft, setOrgDraft] = useState('')
-  const [urlDraft, setUrlDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<ApplicationStatus | null>(null)
   const [showScout, setShowScout] = useState(false)
-  const [major, setMajor] = useState('')
-  const [customMajor, setCustomMajor] = useState('')
-  const [identities, setIdentities] = useState<string[]>([])
-  const [amount, setAmount] = useState('')
-  const [extra, setExtra] = useState('')
-  const [scoutState, setScoutState] = useState<'idle' | 'running' | 'done' | 'failed'>('idle')
-  const [scoutSummary, setScoutSummary] = useState('')
-  const scoutPoll = useRef<number | null>(null)
 
-  useEffect(() => () => { if (scoutPoll.current) window.clearInterval(scoutPoll.current) }, [])
-
-  // compose the fill-in-the-blanks selections into one plain sentence
-  const chosenMajor = major === 'Other…' ? customMajor.trim() : major
-  const criteria = [
-    STAGE_PHRASE[stage ?? 'undergrad'],
-    chosenMajor && `studying ${chosenMajor}`,
-    identities.length > 0 && identities.join(', ').toLowerCase(),
-    amount && (amount === 'any amount' ? 'open to scholarships of any amount' : `looking for scholarships ${amount}`),
-    extra.trim(),
-  ].filter(Boolean).join(', ')
-
-  const toggleIdentity = (id: string) =>
-    setIdentities((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-
-  const startScout = async () => {
-    const c = criteria.trim()
-    if (!c || scoutState === 'running') return
-    setScoutState('running')
-    setScoutSummary('')
-    const id = await scoutApi.search(c)
-    if (!id) {
-      setScoutState('failed')
-      setScoutSummary("Couldn't start the search — is the backend running?")
-      return
-    }
-    const startedAt = Date.now()
-    scoutPoll.current = window.setInterval(async () => {
-      const run = await scoutApi.run(id)
-      const timedOut = Date.now() - startedAt > 4 * 60_000
-      if (run && run.status !== 'running' && run.status !== 'pending') {
-        window.clearInterval(scoutPoll.current!)
-        scoutPoll.current = null
-        setScoutState(run.status === 'success' ? 'done' : 'failed')
-        setScoutSummary(run.result || run.error || 'The search finished without a summary.')
-      } else if (timedOut) {
-        window.clearInterval(scoutPoll.current!)
-        scoutPoll.current = null
-        setScoutState('failed')
-        setScoutSummary('The search is taking too long — check the Assistants page for the run.')
-      }
-    }, 3000)
-  }
-
+  // every applicationsApi call degrades to a safe fallback, so this never throws
   const load = useCallback(async () => {
-    try {
-      const [list, soon, costsRes] = await Promise.all([
-        applicationsApi.list(), applicationsApi.deadlines(30), applicationsApi.costs(),
-      ])
-      setItems(list)
-      setDeadlines(soon)
-      setCosts(costsRes)
-      setError(false)
-    } catch {
-      setError(true)
-    } finally {
-      setLoading(false)
-    }
+    const [list, soon, costsRes] = await Promise.all([
+      applicationsApi.list(), applicationsApi.deadlines(30), applicationsApi.costs(),
+    ])
+    setItems(list)
+    setDeadlines(soon)
+    setCosts(costsRes)
+    setLoading(false)
   }, [])
 
   useEffect(() => { void load() }, [load])
+
+  // deep link: other pages navigate to /applications?open=<id> — open that card once
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (loading) return
+    const open = searchParams.get('open')
+    if (!open) return
+    if (items.some((i) => i.id === open)) setSelected(open)
+    const next = new URLSearchParams(searchParams)
+    next.delete('open')
+    setSearchParams(next, { replace: true })
+  }, [loading, items, searchParams, setSearchParams])
 
   // keep the form's default type in sync when the stage loads or changes
   useEffect(() => { setFormType(cfg.defaultType) }, [cfg.defaultType])
@@ -228,60 +93,6 @@ export function Applications() {
     : typeFilter === 'all' ? deadlines
     : deadlines.filter((d) => d.type === typeFilter)
   const columns = APPLICATION_STATUSES.map((status) => ({ status, items: visible.filter((i) => i.status === status) }))
-
-  // sync drafts whenever the drawer selection changes
-  useEffect(() => {
-    setAmountDraft(selectedItem?.amount == null ? '' : String(selectedItem.amount))
-    setFeeDraft(selectedItem?.app_fee == null ? '' : String(selectedItem.app_fee))
-    setNotesDraft(selectedItem?.notes ?? '')
-    setNameDraft(selectedItem?.name ?? '')
-    setOrgDraft(selectedItem?.org ?? '')
-    setUrlDraft(selectedItem?.url ?? '')
-  }, [selectedItem?.id])
-
-  const patch = async (fields: Parameters<typeof applicationsApi.update>[1]) => {
-    if (!selectedItem) return
-    await applicationsApi.update(selectedItem.id, fields)
-    await load()
-  }
-
-  const commitName2 = async () => {
-    if (!selectedItem || !nameDraft.trim() || nameDraft.trim() === selectedItem.name) return
-    await patch({ name: nameDraft.trim() })
-  }
-
-  const commitAmount = async () => {
-    if (!selectedItem) return
-    const trimmed = amountDraft.trim()
-    const parsed = trimmed === '' ? null : Number(trimmed)
-    const next = parsed === null || Number.isNaN(parsed) ? null : parsed
-    if (next === selectedItem.amount) return
-    await applicationsApi.update(selectedItem.id, { amount: next })
-    await load()
-  }
-
-  const commitFee = async () => {
-    if (!selectedItem) return
-    const trimmed = feeDraft.trim()
-    const parsed = trimmed === '' ? null : Number(trimmed)
-    const next = parsed === null || Number.isNaN(parsed) ? null : parsed
-    if (next === selectedItem.app_fee) return
-    await applicationsApi.update(selectedItem.id, { app_fee: next })
-    await load()
-  }
-
-  const toggleFeeWaived = async (feeWaived: boolean) => {
-    if (!selectedItem) return
-    await applicationsApi.update(selectedItem.id, { fee_waived: feeWaived })
-    await load()
-  }
-
-  const commitNotes = async () => {
-    if (!selectedItem) return
-    if (notesDraft === selectedItem.notes) return
-    await applicationsApi.update(selectedItem.id, { notes: notesDraft })
-    await load()
-  }
 
   const setStatus = async (id: string, status: ApplicationStatus) => {
     // optimistic move so the card lands in the column instantly
@@ -327,9 +138,12 @@ export function Applications() {
     await load()
   }
 
-  const toggleRequirement = async (item: Application, reqId: string, done: boolean) => {
-    await applicationsApi.updateRequirement(item.id, reqId, { done: !done })
-    await load()
+  // Enter anywhere in the add form does what the Add button does
+  const submitFormOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return
+    if (busy || !formName.trim()) return
+    e.preventDefault()
+    void submitForm()
   }
 
   const fafsaApplies = FAFSA_STAGES.has(stage ?? '')
@@ -337,55 +151,9 @@ export function Applications() {
 
   const addFafsa = async () => {
     setBusy(true)
-    const created = await applicationsApi.create({
-      name: 'FAFSA (federal student aid)',
-      type: 'scholarship',
-      org: 'Federal Student Aid',
-      url: 'https://studentaid.gov/h/apply-for-aid/fafsa',
-      deadline: nextJune30Iso(),
-      notes: FAFSA_NOTES,
-    })
-    if (created) {
-      for (const label of FAFSA_CHECKLIST) {
-        await applicationsApi.addRequirement(created.id, label)
-      }
-      setSelected(created.id)
-    }
+    const created = await createFafsa()
+    if (created) setSelected(created.id)
     setBusy(false)
-    await load()
-  }
-
-  const seedChecklist = async () => {
-    // for cards that arrived without one (agent-found, synced) — seed the
-    // stage template for this type
-    const item = selectedItem
-    const template = item && templateFor(item.type)
-    if (!item || !template) return
-    setBusy(true)
-    for (const label of template) {
-      await applicationsApi.addRequirement(item.id, label)
-    }
-    setBusy(false)
-    await load()
-  }
-
-  const addRequirement = async () => {
-    if (!selectedItem || !newReqLabel.trim()) return
-    await applicationsApi.addRequirement(selectedItem.id, newReqLabel.trim())
-    setNewReqLabel('')
-    await load()
-  }
-
-  const deleteRequirement = async (reqId: string) => {
-    if (!selectedItem) return
-    await applicationsApi.deleteRequirement(selectedItem.id, reqId)
-    await load()
-  }
-
-  const removeApplication = async () => {
-    if (!selectedItem) return
-    await applicationsApi.remove(selectedItem.id)
-    setSelected(null)
     await load()
   }
 
@@ -423,92 +191,7 @@ export function Applications() {
         </div>
       </div>
 
-      <AnimatePresence>
-        {showScout && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="mb-6 overflow-hidden"
-          >
-            <Panel className="p-4">
-              <p className="mb-3 text-[12.5px] text-mid">
-                Pick what fits — the scout searches the web and proposes matches. Nothing enters
-                your pipeline until you approve it.
-              </p>
-
-              <p className="label-mono mb-1.5">studying</p>
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {MAJORS.map((m) => (
-                  <Chip key={m} active={major === m} onClick={() => setMajor(major === m ? '' : m)}>{m}</Chip>
-                ))}
-                {major === 'Other…' && (
-                  <input
-                    value={customMajor}
-                    onChange={(e) => setCustomMajor(e.target.value)}
-                    placeholder="your major"
-                    autoFocus
-                    className="rounded-full border border-line bg-raise2 px-3 py-1 text-[12px] text-hi outline-none placeholder:text-low focus:border-ink/25"
-                  />
-                )}
-              </div>
-
-              <p className="label-mono mb-1.5">about you <span className="normal-case">(pick any)</span></p>
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {IDENTITIES.map((id) => (
-                  <Chip key={id} active={identities.includes(id)} onClick={() => toggleIdentity(id)}>{id}</Chip>
-                ))}
-              </div>
-
-              <p className="label-mono mb-1.5">award size</p>
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {AMOUNTS.map((a) => (
-                  <Chip key={a} active={amount === a} onClick={() => setAmount(amount === a ? '' : a)}>{a}</Chip>
-                ))}
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  value={extra}
-                  onChange={(e) => setExtra(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void startScout() }}
-                  placeholder="Anything else — state, sport, club, situation… (optional)"
-                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-2 text-[13px] text-hi outline-none placeholder:text-low focus:border-ink/25"
-                />
-                <Btn kind="primary" onClick={() => void startScout()} disabled={scoutState === 'running' || !criteria.trim()}>
-                  {scoutState === 'running' ? 'Searching…' : 'Search'}
-                </Btn>
-              </div>
-              {criteria && scoutState !== 'running' && (
-                <p className="mt-2 text-[12px] text-low">Will search for: <span className="text-mid">{criteria}</span></p>
-              )}
-              {scoutState === 'running' && (
-                <p className="mt-2 text-[12.5px] text-mid">
-                  Searching the web — this takes a minute or two. You can leave this page; results
-                  land in <Link to="/approvals" className="underline decoration-dotted">Approvals</Link>.
-                </p>
-              )}
-              {scoutState === 'done' && (
-                <div className="mt-2">
-                  <p className="whitespace-pre-line text-[12.5px] leading-relaxed text-mid">{scoutSummary}</p>
-                  <Link to="/approvals" className="mt-1 inline-block text-[12.5px] text-hi underline decoration-dotted">
-                    Review proposals in Approvals →
-                  </Link>
-                </div>
-              )}
-              {scoutState === 'failed' && (
-                <p className="mt-2 text-[12.5px] text-fail">{scoutSummary}</p>
-              )}
-            </Panel>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {error && (
-        <div className="mb-4 rounded-[10px] border border-hairline px-3 py-2.5">
-          <Mono className="text-low">Couldn't reach the applications service — showing what's cached.</Mono>
-        </div>
-      )}
+      <ScholarshipScout show={showScout} stage={stage} />
 
       <AnimatePresence>
         {showForm && (
@@ -525,6 +208,7 @@ export function Applications() {
                   <input
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
+                    onKeyDown={submitFormOnEnter}
                     placeholder="Stanford MS CS"
                     className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                   />
@@ -545,6 +229,7 @@ export function Applications() {
                     type="date"
                     value={formDeadline}
                     onChange={(e) => setFormDeadline(e.target.value)}
+                    onKeyDown={submitFormOnEnter}
                     className="rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
                   />
                 </div>
@@ -619,7 +304,7 @@ export function Applications() {
             {columns.map(({ status, items: colItems }) => (
               <div
                 key={status}
-                className={`w-[220px] shrink-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
+                className={`w-[200px] shrink-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
                 onDragOver={(e) => {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
@@ -688,202 +373,15 @@ export function Applications() {
 
       <AnimatePresence>
         {selectedItem && (
-          <motion.aside
-            className="glass-strong fixed top-4 right-4 bottom-4 z-30 flex w-[400px] max-w-[calc(100vw-2rem)] flex-col overflow-y-auto rounded-[18px] p-6"
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 16 }}
-            transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="mb-2 flex items-start justify-between gap-3">
-              <input
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                onBlur={() => void commitName2()}
-                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                className="-mx-1 w-full rounded-md px-1 text-[17px] font-semibold tracking-[-0.01em] text-hi outline-none hover:bg-ink/4 focus:bg-ink/4"
-                aria-label="Application name"
-              />
-              <button onClick={() => setSelected(null)} className="text-low hover:text-mid"><X size={16} /></button>
-            </div>
-
-            <div className="mb-4 flex flex-wrap items-end gap-3">
-              <div>
-                <p className="label-mono mb-1">type</p>
-                <select
-                  value={selectedItem.type}
-                  onChange={(e) => void patch({ type: e.target.value as ApplicationType })}
-                  className="rounded-lg border border-line bg-raise2 px-2 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
-                >
-                  {APPLICATION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <p className="label-mono mb-1">deadline</p>
-                <input
-                  type="date"
-                  value={selectedItem.deadline ?? ''}
-                  onChange={(e) => void patch({ deadline: e.target.value || null })}
-                  className="rounded-lg border border-line bg-raise2 px-2 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
-                />
-              </div>
-              <div className="flex flex-col items-start gap-1 pb-0.5">
-                <Pill>{STATUS_LABEL[selectedItem.status]}</Pill>
-                {selectedItem.deadline && <DeadlineLabel deadline={selectedItem.deadline} />}
-              </div>
-            </div>
-
-            {selectedItem.status === 'decision' && (
-              <div className="mb-4">
-                <p className="label-mono mb-1">result</p>
-                <select
-                  value={selectedItem.decision_result}
-                  onChange={(e) => void patch({ decision_result: e.target.value as Application['decision_result'] })}
-                  className="rounded-lg border border-line bg-raise2 px-2 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
-                >
-                  <option value="">undecided</option>
-                  <option value="accepted">accepted</option>
-                  <option value="rejected">rejected</option>
-                  <option value="waitlisted">waitlisted</option>
-                </select>
-              </div>
-            )}
-
-            <div className="mb-4 flex gap-3">
-              <div className="flex-1">
-                <p className="label-mono mb-1">school / funder</p>
-                <input
-                  value={orgDraft}
-                  onChange={(e) => setOrgDraft(e.target.value)}
-                  onBlur={() => { if (orgDraft !== selectedItem.org) void patch({ org: orgDraft }) }}
-                  placeholder="e.g. Stanford"
-                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none placeholder:text-low focus:border-ink/25"
-                />
-              </div>
-              <div className="flex-1">
-                <p className="label-mono mb-1">link</p>
-                <input
-                  value={urlDraft}
-                  onChange={(e) => setUrlDraft(e.target.value)}
-                  onBlur={() => { if (urlDraft !== selectedItem.url) void patch({ url: urlDraft }) }}
-                  placeholder="https://…"
-                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none placeholder:text-low focus:border-ink/25"
-                />
-              </div>
-            </div>
-
-            <div className="mb-4 flex items-end gap-3">
-              <div className="flex-1">
-                <p className="label-mono mb-1">amount</p>
-                <input
-                  type="number"
-                  min={0}
-                  value={amountDraft}
-                  onChange={(e) => setAmountDraft(e.target.value)}
-                  onBlur={() => void commitAmount()}
-                  placeholder="0"
-                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
-                />
-              </div>
-              <div className="flex-1">
-                <p className="label-mono mb-1">app fee</p>
-                <input
-                  type="number"
-                  min={0}
-                  value={feeDraft}
-                  onChange={(e) => setFeeDraft(e.target.value)}
-                  onBlur={() => void commitFee()}
-                  placeholder="0"
-                  className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
-                />
-              </div>
-            </div>
-
-            <label className="mb-4 flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={selectedItem.fee_waived}
-                onChange={(e) => void toggleFeeWaived(e.target.checked)}
-                className="size-3.5 accent-ink/70"
-              />
-              <span className="text-[12.5px] text-mid">fee waived</span>
-            </label>
-
-            <div className="mb-4">
-              <p className="label-mono mb-2">requirements</p>
-              <div className="flex flex-col gap-1.5">
-                {selectedItem.requirements.length === 0 && (
-                  cfg.requirementTemplates[selectedItem.type] ? (
-                    <Btn onClick={() => void seedChecklist()} disabled={busy}>
-                      {busy ? 'Adding…' : `Add ${selectedItem.type} checklist`}
-                    </Btn>
-                  ) : (
-                    <Mono className="text-low">none yet</Mono>
-                  )
-                )}
-                {selectedItem.requirements.map((r) => (
-                  <div key={r.id} className="flex items-center gap-2">
-                    <button
-                      onClick={() => void toggleRequirement(selectedItem, r.id, r.done)}
-                      className={`flex size-4 shrink-0 items-center justify-center rounded border border-line ${r.done ? 'bg-ink/12 text-hi' : 'text-transparent'}`}
-                    >
-                      <Check size={11} />
-                    </button>
-                    <span className={`flex-1 text-[12.5px] ${r.done ? 'text-low line-through' : 'text-mid'}`}>{r.label}</span>
-                    <button onClick={() => void deleteRequirement(r.id)} className="text-low hover:text-fail">
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={newReqLabel}
-                  onChange={(e) => setNewReqLabel(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void addRequirement() }}
-                  placeholder="Add requirement…"
-                  className="flex-1 rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[12.5px] text-hi outline-none focus:border-ink/25"
-                />
-                <Btn onClick={() => void addRequirement()} disabled={!newReqLabel.trim()}><Plus size={13} /></Btn>
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <p className="label-mono mb-1.5">description</p>
-              <textarea
-                value={notesDraft}
-                onChange={(e) => setNotesDraft(e.target.value)}
-                onBlur={() => void commitNotes()}
-                placeholder="What is this? Award details, why it's a fit, who to ask for letters…"
-                rows={4}
-                className="w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2 text-[12.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-ink/25"
-              />
-            </div>
-
-            {selectedItem.url && (
-              <a href={selectedItem.url} target="_blank" rel="noreferrer" className="mb-4 block font-mono text-[11px] text-low hover:text-mid">
-                {selectedItem.url}
-              </a>
-            )}
-
-            <div className="mt-auto flex items-center gap-2">
-              <Btn
-                onClick={() => {
-                  void patch({ archived: !selectedItem.archived })
-                  setSelected(null)
-                }}
-              >
-                <span className="flex items-center gap-1.5">
-                  {selectedItem.archived
-                    ? <><ArchiveRestore size={13} /> Restore</>
-                    : <><Archive size={13} /> Archive</>}
-                </span>
-              </Btn>
-              <Btn kind="danger" onClick={() => void removeApplication()}>
-                <span className="flex items-center gap-1.5"><Trash2 size={13} /> Delete</span>
-              </Btn>
-            </div>
-          </motion.aside>
+          <ApplicationDrawer
+            item={selectedItem}
+            busy={busy}
+            setBusy={setBusy}
+            canSeedChecklist={Boolean(cfg.requirementTemplates[selectedItem.type])}
+            templateFor={templateFor}
+            onClose={() => setSelected(null)}
+            onChanged={load}
+          />
         )}
       </AnimatePresence>
     </div>

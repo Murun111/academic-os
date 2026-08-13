@@ -9,11 +9,28 @@ import { EmptyState, Mono, timeAgo } from '../components/ui'
 // bundled local AI regardless of the requested model name
 const FALLBACK_MODELS = ['local ai']
 
+// A rail refetch carries summaries only (api.threads sends no messages), so keep
+// whatever content is already loaded, and keep threads that exist only in this
+// tab — a brand-new one the student hasn't sent into yet is not on disk.
+function mergeThreads(incoming: ChatThread[], prev: ChatThread[]): ChatThread[] {
+  const old = new Map(prev.map((t) => [t.id, t]))
+  const merged = incoming.map((t) => {
+    const o = old.get(t.id)
+    return o && o.messages.length > 0 ? { ...t, messages: o.messages } : t
+  })
+  const seen = new Set(incoming.map((t) => t.id))
+  return [...prev.filter((t) => !seen.has(t.id)), ...merged]
+}
+
 export function Chat() {
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [models, setModels] = useState<string[]>(FALLBACK_MODELS)
   const [model, setModel] = useState(FALLBACK_MODELS[0])
+  // Until this resolves the picker still reads 'local ai'. Sending that while
+  // Ollama is running makes Ollama 404 the model, so gate send on it rather
+  // than let the turn resolve against the wrong model.
+  const [modelsReady, setModelsReady] = useState(false)
 
   // the picker lists what is actually installed, not a hardcoded wishlist
   useEffect(() => {
@@ -27,10 +44,17 @@ export function Chat() {
         }
       })
       .catch(() => {})
+      .finally(() => setModelsReady(true))
   }, [])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  // a thread's messages arrive only when it is opened, so the pane says so
+  const [loadingThread, setLoadingThread] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // threads whose content we already have (fetched, or created in this tab)
+  const loadedRef = useRef<Set<string>>(new Set())
+  const loadingIdRef = useRef<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     void api.threads().then((t) => {
@@ -41,6 +65,48 @@ export function Chat() {
 
   const active = threads.find((t) => t.id === activeId) ?? null
 
+  // pull the open thread's server-side state back in: a reply that finished
+  // while the tab was in the background (or after a cancel) is not lost.
+  const syncThread = async (id: string) => {
+    const full = await api.thread(id)
+    if (!full || full.messages.length === 0) return
+    setThreads((ts) =>
+      ts.map((t) =>
+        // shorter than what's on screen means the turn is still in flight — keep ours
+        t.id === id && full.messages.length >= t.messages.length ? { ...t, ...full } : t,
+      ),
+    )
+  }
+
+  const refresh = async (id: string | null) => {
+    const t = await api.threads()
+    setThreads((prev) => mergeThreads(t, prev))
+    if (id) await syncThread(id)
+  }
+
+  // open a thread → fetch its messages once
+  useEffect(() => {
+    const id = activeId
+    if (!id || loadedRef.current.has(id)) { loadingIdRef.current = null; setLoadingThread(false); return }
+    loadedRef.current.add(id)
+    loadingIdRef.current = id
+    setLoadingThread(true)
+    void api.thread(id)
+      .then((full) => {
+        if (full) setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, ...full } : t)))
+      })
+      // a slower fetch for a thread the student already switched away from
+      // must not clear the spinner on the one they are looking at now
+      .finally(() => { if (loadingIdRef.current === id) setLoadingThread(false) })
+  }, [activeId])
+
+  // coming back to the tab: the rail and the open thread catch up
+  useEffect(() => {
+    const onFocus = () => { if (!busy) void refresh(activeId) }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [activeId, busy])
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [active?.messages.length, busy])
@@ -50,13 +116,14 @@ export function Chat() {
       id: `local_${Date.now()}`, title: 'new thread', model,
       updated: new Date().toISOString(), messages: [],
     }
+    loadedRef.current.add(t.id) // nothing on disk yet; don't try to fetch it
     setThreads((ts) => [t, ...ts])
     setActiveId(t.id)
   }
 
   const send = async () => {
     const text = draft.trim()
-    if (!text || busy) return
+    if (!text || busy || !modelsReady) return
     setDraft('')
     setBusy(true)
     const mine: ChatMessage = { role: 'user', content: text, t: new Date().toISOString() }
@@ -65,6 +132,7 @@ export function Chat() {
     let id = activeId
     if (!id || !threads.some((t) => t.id === id)) {
       id = `local_${Date.now()}`
+      loadedRef.current.add(id) // nothing on disk yet; don't try to fetch it
       setThreads((ts) => [
         { id: id as string, title: 'new thread', model, updated: mine.t, messages: [] },
         ...ts,
@@ -84,11 +152,17 @@ export function Chat() {
           : t,
       ),
     )
+    const ctl = new AbortController()
+    abortRef.current = ctl
     try {
-      const replies = await api.chat(id, text, model)
+      const replies = await api.chat(id, text, model, ctl.signal)
       setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, messages: [...t.messages, ...replies] } : t)))
     } finally {
+      abortRef.current = null
       setBusy(false)
+      // the turn is persisted server-side; pick up the saved version (and any
+      // reply that landed after a cancel) rather than trusting only local state
+      void refresh(id)
     }
   }
 
@@ -116,7 +190,10 @@ export function Chat() {
               }`}
             >
               <p className={`truncate text-[13px] ${t.id === activeId ? 'text-hi' : 'text-mid'}`}>{t.title}</p>
-              <p className="mt-0.5 font-mono text-[11px] text-low">{t.model} · {timeAgo(t.updated)}</p>
+              {/* summaries can arrive without a stamp — don't print "NaNd" */}
+              <p className="mt-0.5 font-mono text-[11px] text-low">
+                {t.model}{t.updated ? ` · ${timeAgo(t.updated)}` : ''}
+              </p>
             </button>
           ))}
         </div>
@@ -131,7 +208,9 @@ export function Chat() {
           ref={scrollRef}
           className="flex-1 overflow-y-auto pt-1 pb-4 [scrollbar-gutter:stable_both-edges]"
         >
-          {!active || active.messages.length === 0 ? (
+          {active && active.messages.length === 0 && loadingThread ? (
+            <p className="px-1 font-mono text-[12px] text-low">loading thread…</p>
+          ) : !active || active.messages.length === 0 ? (
             <EmptyState title="Say something." hint="Ask about your deadlines, essays, or courses." />
           ) : (
             <div className="flex flex-col gap-4">
@@ -165,8 +244,14 @@ export function Chat() {
                 ),
               )}
               {busy && (
-                <div className="panel self-start rounded-2xl px-4 py-2.5">
+                <div className="panel flex items-center gap-3 self-start rounded-2xl px-4 py-2.5">
                   <span className="font-mono text-[12px] text-low">thinking…</span>
+                  <button
+                    onClick={() => abortRef.current?.abort()}
+                    className="font-mono text-[11px] text-low underline-offset-2 transition-colors hover:text-hi hover:underline"
+                  >
+                    cancel
+                  </button>
                 </div>
               )}
             </div>
@@ -194,7 +279,7 @@ export function Chat() {
           </select>
           <button
             onClick={() => void send()}
-            disabled={!draft.trim() || busy}
+            disabled={!draft.trim() || busy || !modelsReady}
             className="grid size-8 place-items-center rounded-lg bg-ink/8 text-hi transition-colors hover:bg-ink/13 disabled:opacity-30"
           >
             <ArrowUp size={15} />

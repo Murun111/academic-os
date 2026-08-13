@@ -60,10 +60,11 @@ async def test_bundled_chat_raises_when_model_missing(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bundled_chat_injects_house_style_and_tight_sampling(monkeypatch):
-    """The bundled (esp. 0.5B) model drifts into emoji/hashtag voice on bare
-    turns with default sampling — the fallback must pin a style system message
-    first and constrain temperature."""
+async def test_bundled_chat_uses_tight_sampling(monkeypatch):
+    """llama-server's default temperature (0.8) is far too loose for the 0.5B
+    fallback. The bundled path must constrain entropy itself — house style is
+    NOT injected here (app.py owns it, so it reaches every backend); asserting
+    its absence keeps the two from double-injecting."""
     import io
     import json as _json
 
@@ -81,8 +82,65 @@ async def test_bundled_chat_injects_house_style_and_tight_sampling(monkeypatch):
 
     r = await OllamaBackend()._bundled_chat([ChatMessage(role="user", content="hey")], 0.0)
     assert r.content == "Plain sentence."
-    first = captured["messages"][0]
-    assert first["role"] == "system"
-    assert "emoji" in first["content"].lower()
     assert captured["temperature"] <= 0.5
     assert captured["repeat_penalty"] >= 1.0
+    assert [m["role"] for m in captured["messages"]] == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_chat_rejects_unknown_model_instead_of_downgrading(monkeypatch):
+    """Ollama 404/400s an unknown model name. HTTPError subclasses URLError, so
+    this used to fall through to the bundled 0.5B and answer anyway — a silent
+    quality downgrade with no error surfaced anywhere."""
+    import io
+    import urllib.error as _ue
+
+    def _rejects(req, timeout=None):
+        raise _ue.HTTPError(
+            "http://127.0.0.1:11434/api/chat", 400, "Bad Request", {},
+            io.BytesIO(b'{"error":"invalid model name"}'),
+        )
+
+    monkeypatch.setattr(llm_hub.urllib.request, "urlopen", _rejects)
+
+    async def _must_not_run(self, messages, t0):  # pragma: no cover
+        raise AssertionError("fell back to bundled model on an HTTP rejection")
+
+    monkeypatch.setattr(OllamaBackend, "_bundled_chat", _must_not_run)
+
+    with pytest.raises(RuntimeError, match="rejected model"):
+        await OllamaBackend().chat([ChatMessage(role="user", content="hey")], model="local ai")
+
+
+def test_chat_endpoint_injects_house_style_for_every_backend(monkeypatch):
+    """The Chat bubble renders raw text with no markdown parser, so a model
+    emitting '### Tips' puts literal hashes on screen. The endpoint pins house
+    style ahead of the turn regardless of which backend serves it."""
+    from fastapi.testclient import TestClient
+
+    import backend.app as app_mod
+    from backend.app import app
+
+    captured: dict = {}
+
+    class _FakeBackend:
+        name = "ollama"
+
+        async def chat(self, messages, model="", options=None):
+            captured["messages"] = messages
+            return ChatResult(backend="ollama", model=model, content="Plain sentence.")
+
+    monkeypatch.setattr(app_mod, "get_backend", lambda name: _FakeBackend())
+
+    with TestClient(app) as c:
+        r = c.post("/api/llms/chat", json={
+            "backend": "ollama", "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "study tips"}],
+        })
+    assert r.status_code == 200
+
+    first = captured["messages"][0]
+    assert first.role == "system"
+    lowered = first.content.lower()
+    assert "emoji" in lowered
+    assert "markdown" in lowered

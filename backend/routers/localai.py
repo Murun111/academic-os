@@ -32,14 +32,16 @@ def localai_download(body: DownloadBody) -> JSONResponse:
 
 @router.post("/start")
 def localai_start() -> JSONResponse:
-    """Boot the llama-server (blocks until healthy or timeout)."""
-    ok = local_llm.ensure_running()
-    if ok:
-        return JSONResponse({"ok": True, "running": True})
-    s = local_llm.status()
-    detail = ("model not downloaded" if not s["model"]
-              else "binary missing" if not s["binary"] else "failed to start")
-    return JSONResponse({"ok": False, "detail": detail}, status_code=503)
+    """Kick off the llama-server boot in the background and return immediately.
+
+    Poll GET /status — its "running"/"starting"/"start_error" fields track
+    the real state of the attempt.
+    """
+    result = local_llm.start_running_async()
+    if result.get("ok"):
+        return JSONResponse(result, status_code=200)
+    return JSONResponse({"ok": False, "detail": result.get("detail", "failed to start")},
+                         status_code=503)
 
 
 @router.post("/stop")

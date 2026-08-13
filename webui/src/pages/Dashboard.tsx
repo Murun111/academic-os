@@ -36,6 +36,13 @@ function daysUntil(deadline: string): number {
   return Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000)
 }
 
+// where an agenda row sends you when you click it
+function agendaHref(item: AgendaItem): string {
+  if (item.kind === 'assignment') return '/courses'
+  if (item.kind === 'task') return '/study'
+  return item.id ? `/applications?open=${item.id}` : '/applications'
+}
+
 export function Dashboard() {
   const { agents, events, approvals, health, runAgent, stage, userName, track, testDate } = useOs()
   const trackCfg = trackApplies(stage) ? trackConfig(track) : null
@@ -59,7 +66,11 @@ export function Dashboard() {
 
   const hour = new Date().getHours()
   const daypart = hour < 5 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
-  const todayItems = agenda.filter((i) => isToday(i.date) || isOverdue(i.date))
+  // done tasks stay in the agenda (Study renders them checked) — the dashboard
+  // shows only what still needs doing
+  const todayItems = agenda.filter(
+    (i) => (isToday(i.date) || isOverdue(i.date)) && i.meta?.done !== true,
+  )
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -127,6 +138,11 @@ export function Dashboard() {
                 {deadlines.length === 0 && (
                   <EmptyState title="No deadlines in the next 45 days." hint="Add applications to track them here." />
                 )}
+                {deadlines.length > 5 && (
+                  <Link to="/applications" className="pt-1 text-[12px] text-low hover:text-mid">
+                    Showing 5 of {deadlines.length} — see all
+                  </Link>
+                )}
               </div>
             </Panel>
           </motion.div>
@@ -140,11 +156,15 @@ export function Dashboard() {
               />
               <div className="flex flex-col gap-1.5 px-5 pb-4">
                 {todayItems.slice(0, 6).map((i) => (
-                  <div key={`${i.kind}-${i.id}`} className="flex items-baseline gap-3">
+                  <Link
+                    key={`${i.kind}-${i.id}`}
+                    to={agendaHref(i)}
+                    className="-mx-1 flex items-baseline gap-3 rounded-lg px-1 py-0.5 transition-colors hover:bg-ink/5"
+                  >
                     <Pill tone={kindTone(i.kind)}>{i.kind}</Pill>
                     <span className="flex-1 truncate text-[13px] text-mid">{i.title}</span>
                     {i.date && isOverdue(i.date) && <Mono className="text-fail">overdue</Mono>}
-                  </div>
+                  </Link>
                 ))}
                 {todayItems.length === 0 && <EmptyState title="Nothing due today. Breathe." />}
               </div>
@@ -203,8 +223,29 @@ export function Dashboard() {
             <Panel>
               <PanelHead label="services" />
               <div className="px-5 pb-3">
-                <ServiceRow name="app server" state={health?.backend ?? 'ok'} />
-                <ServiceRow name="local ai" state={health?.ollama ?? 'ok'} />
+                {health ? (
+                  <>
+                    <ServiceRow name="app server" state={health.backend} />
+                    <ServiceRow name="local ai" state={health.ollama} />
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between py-1">
+                      <Mono className="text-mid">app server</Mono>
+                      <span className="flex items-center gap-2">
+                        <StatusDot state="checking" />
+                        <Mono className="text-low">checking…</Mono>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <Mono className="text-mid">local ai</Mono>
+                      <span className="flex items-center gap-2">
+                        <StatusDot state="checking" />
+                        <Mono className="text-low">checking…</Mono>
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </Panel>
           </motion.div>

@@ -14,7 +14,14 @@ from pathlib import Path
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 # Persistent user-approved allowlist (same file written by agent_admin.autonomy_allow)
-_ALLOW_PATH: Path = Path.home() / ".agentic-os" / "autonomy_allow.json"
+#
+# Test override: set to a Path to pin the file location. When None (normal
+# operation) it resolves inside the app data root — never a foreign dir.
+_ALLOW_PATH_OVERRIDE: Path | None = None
+
+# Fork-era location (~/.agentic-os/autonomy_allow.json) — read once for a
+# one-time migration into the app data root, then never touched again.
+_LEGACY_ALLOW_PATH: Path = Path.home() / ".agentic-os" / "autonomy_allow.json"
 
 # Privileged self-mutating tools: ALWAYS gated regardless of posture or allowlist.
 # They can never be promoted to auto-allow — the allowlist check is intentionally
@@ -83,6 +90,33 @@ class GateDecision:
 
 # ── Persistent allowlist ──────────────────────────────────────────────────────
 
+def _allow_path() -> Path:
+    """Resolve the autonomy allowlist file path.
+
+    Order of resolution:
+    1. _ALLOW_PATH_OVERRIDE (test hook)
+    2. <data root>/data/autonomy_allow.json, via backend.vault.agentic_os_dir()
+
+    One-time migration: if the new file doesn't exist yet but the legacy
+    fork-era file does, copy it over (never delete the legacy file).
+    """
+    if _ALLOW_PATH_OVERRIDE is not None:
+        return Path(_ALLOW_PATH_OVERRIDE)
+
+    from backend.vault import agentic_os_dir
+
+    path = agentic_os_dir() / "data" / "autonomy_allow.json"
+
+    if not path.exists() and _LEGACY_ALLOW_PATH.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(_LEGACY_ALLOW_PATH.read_bytes())
+        except OSError:
+            pass
+
+    return path
+
+
 def _persistent_allowlist() -> set[str]:
     """Return the set of tools explicitly promoted to auto-allow by the user.
 
@@ -90,8 +124,9 @@ def _persistent_allowlist() -> set[str]:
     that a missing or corrupt file never blocks normal gate logic.
     """
     try:
-        if _ALLOW_PATH.exists():
-            data = json.loads(_ALLOW_PATH.read_text())
+        allow_path = _allow_path()
+        if allow_path.exists():
+            data = json.loads(allow_path.read_text())
             if isinstance(data, list):
                 return set(data)
     except Exception:  # noqa: BLE001

@@ -4,6 +4,8 @@ pre-law, …) and exam date. Stored as a single JSON file in the data root."""
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from datetime import date
 from pathlib import Path
 from typing import Literal, Optional
@@ -67,7 +69,9 @@ def put_profile(body: ProfileBody) -> dict:
         "test_date": body.test_date,
         "reminders": body.reminders,
     }
-    p.write_text(json.dumps(data))
+    tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, p)
     return {"ok": True, **data}
 
 

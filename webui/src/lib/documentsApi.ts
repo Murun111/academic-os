@@ -17,6 +17,12 @@ export interface DocumentHistoryEntry {
   at: string // ISO datetime
 }
 
+export interface DocumentFile {
+  name: string
+  size: number
+  added_at: string
+}
+
 export interface Document {
   id: string
   title: string
@@ -28,6 +34,7 @@ export interface Document {
   linked_application_ids: string[]
   notes: string
   content: string
+  files: DocumentFile[]
   created_at: string
   updated_at: string
 }
@@ -92,6 +99,22 @@ export const documentsApi = {
   delete: (id: string) => dpost<{ ok: boolean }>(`/${id}`, undefined, 'DELETE'),
   bumpVersion: (id: string, note: string) =>
     dpost<{ ok: boolean; item: Document }>(`/${id}/versions`, { note }),
+  uploadFile: async (id: string, file: File): Promise<{ ok: boolean; item: Document } | null> => {
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const r = await fetch(`/api/documents/${id}/files`, { method: 'POST', body: form })
+      if (!r.ok) return null
+      return (await r.json()) as { ok: boolean; item: Document }
+    } catch {
+      return null
+    }
+  },
+  fileUrl: (id: string, name: string) =>
+    `/api/documents/${id}/files/${encodeURIComponent(name)}`,
+  deleteFile: (id: string, name: string) =>
+    dpost<{ ok: boolean; item: Document }>(
+      `/${id}/files/${encodeURIComponent(name)}`, undefined, 'DELETE'),
   link: (id: string, applicationId: string) =>
     dpost<{ ok: boolean; item: Document }>(`/${id}/link`, { application_id: applicationId }),
   unlink: (id: string, applicationId: string) =>

@@ -14,7 +14,9 @@ Config lives at data/connectors/ics.json:
 from __future__ import annotations
 
 import json
+import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -114,7 +116,11 @@ class IcsSyncService:
         return {"feeds": [], "last_sync": None, "last_result": None}
 
     def _save(self, cfg: dict) -> None:
-        self._path.write_text(json.dumps(cfg, indent=2))
+        """Write config atomically: tmp file in the same dir, then replace."""
+        p = self._path
+        tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps(cfg, indent=2))
+        os.replace(tmp, p)
 
     def add_feed(self, url: str) -> dict:
         cfg = self.config()

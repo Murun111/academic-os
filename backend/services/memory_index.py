@@ -291,12 +291,23 @@ def all_items() -> list[MemoryItem]:
     return [_row_to_item(r) for r in _fetch_all_rows()]
 
 
-def delete_item(item_id: str) -> bool:
-    """Remove one item from the index (and therefore from recall)."""
+def delete_item(item_id: str) -> str | None:
+    """Remove one item from the index (and therefore from recall).
+
+    Returns the deleted item's body text, or None if no item matched
+    (truthy/falsy behavior is unchanged for existing `if delete_item(...):`
+    callers — a real deletion always yields a non-empty body).
+    """
     _ensure_db()
     with sqlite3.connect(_db_path()) as conn:
-        cur = conn.execute("DELETE FROM memory_items WHERE item_id = ?", (item_id,))
-        return cur.rowcount > 0
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT body FROM memory_items WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM memory_items WHERE item_id = ?", (item_id,))
+        return row["body"]
 
 
 def delete_all() -> int:

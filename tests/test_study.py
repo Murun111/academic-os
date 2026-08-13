@@ -200,3 +200,19 @@ def test_agenda_excludes_tasks_outside_window(client: TestClient):
     r = client.get("/api/study/agenda", params={"days": 7})
     assert r.status_code == 200
     assert r.json()["items"] == []
+
+
+def test_agenda_includes_done_tasks_with_done_meta(client: TestClient):
+    """Done tasks stay in the agenda carrying meta.done, so the Study page can
+    render them checked instead of dropping them (Dashboard filters them out)."""
+    from datetime import date
+
+    today = date.today().isoformat()
+    r = client.post("/api/study/tasks", json={"title": "Review flashcards", "day": today})
+    tid = r.json()["id"]
+    client.post(f"/api/study/tasks/{tid}/done")
+
+    items = client.get("/api/study/agenda", params={"days": 7}).json()["items"]
+    mine = [i for i in items if i["kind"] == "task" and i["id"] == tid]
+    assert len(mine) == 1
+    assert mine[0]["meta"]["done"] is True

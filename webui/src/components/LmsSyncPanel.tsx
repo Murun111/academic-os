@@ -3,7 +3,7 @@
 // assignments and courses upsert on sync.
 import { useEffect, useState } from 'react'
 import { RefreshCw, Link2, Trash2, Unplug } from 'lucide-react'
-import { connectorsApi, type CanvasConfig, type IcsConfig } from '../lib/connectorsApi'
+import { connectorsApi, type CanvasConfig, type CanvasSyncResult, type IcsConfig } from '../lib/connectorsApi'
 import { coursesApi } from '../lib/coursesApi'
 import { Btn, Mono, Panel, PanelHead } from './ui'
 
@@ -153,6 +153,24 @@ function DuplicateNotice({ onChanged }: { onChanged: () => void }) {
   )
 }
 
+// Maps a total-sync-failure code (POST /api/connectors/canvas/sync responds
+// 502 with {error, status?} on total failure) to copy a student can act on —
+// never shows the raw exception text from the backend.
+type CanvasSyncErrorKind = 'auth_error' | 'network_error' | 'canvas_error' | 'config_error' | 'unknown'
+
+function canvasErrorMessage(kind: CanvasSyncErrorKind, status?: number): string {
+  switch (kind) {
+    case 'auth_error':
+      return 'Canvas rejected the token — generate a new one and paste it again.'
+    case 'network_error':
+      return "Can't reach Canvas — check the internet connection and try again."
+    case 'canvas_error':
+      return `Canvas had a problem${status ? ` (HTTP ${status})` : ''} — try again in a bit.`
+    default:
+      return 'Canvas sync failed — check the token and URL.'
+  }
+}
+
 function CanvasSection({ onSynced }: { onSynced: () => void }) {
   const [cfg, setCfg] = useState<CanvasConfig | null>(null)
   const [baseUrl, setBaseUrl] = useState('')
@@ -167,7 +185,7 @@ function CanvasSection({ onSynced }: { onSynced: () => void }) {
     if (!baseUrl.trim() || !token.trim()) return
     setBusy(true)
     const ok = await connectorsApi.canvasConnect(baseUrl.trim(), token.trim())
-    setNote(ok ? 'Connected. Run a sync.' : 'Could not save — check the URL and token.')
+    setNote(ok ? 'Connected — syncing your courses now…' : 'Could not save — check the URL and token.')
     if (ok) { setToken(''); setBaseUrl('') }
     await refresh()
     setBusy(false)
@@ -184,15 +202,35 @@ function CanvasSection({ onSynced }: { onSynced: () => void }) {
   const syncNow = async () => {
     setBusy(true)
     setNote('Syncing Canvas…')
-    const r = await connectorsApi.canvasSync()
-    if (r) {
-      const errs = r.errors.length
-      setNote(
-        `Canvas: ${r.courses} courses · ${r.created} new, ${r.updated} updated` +
-        (errs ? ` · ${errs} error${errs > 1 ? 's' : ''}` : ''),
-      )
-      onSynced()
-    } else {
+    // connectorsApi.canvasSync() collapses any non-2xx to a bare null, which
+    // loses the {error, status} the backend sends on a total failure — fetch
+    // directly here so auth/network/other failures can get distinct copy.
+    try {
+      const res = await fetch('/api/connectors/canvas/sync', { method: 'POST' })
+      if (res.ok) {
+        const r = (await res.json()) as CanvasSyncResult
+        const errs = r.errors.length
+        setNote(
+          `Canvas: ${r.courses} courses · ${r.created} new, ${r.updated} updated` +
+          (errs ? ` · ${errs} error${errs > 1 ? 's' : ''}` : ''),
+        )
+        onSynced()
+      } else {
+        let kind: CanvasSyncErrorKind = 'unknown'
+        let status: number | undefined
+        try {
+          const body = await res.json()
+          if (body?.error === 'auth_error' || body?.error === 'network_error' ||
+              body?.error === 'canvas_error' || body?.error === 'config_error') {
+            kind = body.error
+          }
+          status = typeof body?.status === 'number' ? body.status : undefined
+        } catch {
+          // non-JSON body — fall back to the generic message
+        }
+        setNote(canvasErrorMessage(kind, status))
+      }
+    } catch {
       setNote('Canvas sync failed — check the token and URL.')
     }
     await refresh()

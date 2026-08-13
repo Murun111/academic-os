@@ -32,6 +32,13 @@ function KindPill({ kind }: { kind: AgendaItem['kind'] }) {
   return <Pill tone={kindTone(kind)}>{kind}</Pill>
 }
 
+// The agenda carries completion in `meta`: tasks as `done`, assignments as
+// `status`. Anything the backend doesn't send reads as not done.
+function isItemDone(item: AgendaItem): boolean {
+  const meta = item.meta ?? {}
+  return meta.done === true || meta.status === 'done'
+}
+
 function AgendaRow({ item, onToggleDone }: { item: AgendaItem; onToggleDone?: (id: string) => void }) {
   const isTask = item.kind === 'task'
   return (
@@ -39,7 +46,7 @@ function AgendaRow({ item, onToggleDone }: { item: AgendaItem; onToggleDone?: (i
       {isTask && item.id ? (
         <input
           type="checkbox"
-          checked={false}
+          checked={isItemDone(item)}
           onChange={() => onToggleDone?.(item.id as string)}
           className="size-3.5 accent-ink/70"
           aria-label={`Mark "${item.title ?? 'task'}" done`}
@@ -187,7 +194,7 @@ export function Study() {
                       {item.kind === 'task' && item.id && (
                         <input
                           type="checkbox"
-                          checked={false}
+                          checked={isItemDone(item)}
                           onChange={() => void handleToggleDone(item.id as string)}
                           className="size-3 shrink-0 accent-ink/70"
                           aria-label={`Mark "${item.title ?? 'task'}" done`}

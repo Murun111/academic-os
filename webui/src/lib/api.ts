@@ -18,7 +18,8 @@ export interface OsApi {
   seedEvents(): Promise<OsEvent[]>
   memories(q?: string): Promise<MemoryEntry[]>
   threads(): Promise<ChatThread[]>
-  chat(threadId: string | null, text: string, model: string): Promise<ChatMessage[]>
+  thread(id: string): Promise<ChatThread | null>
+  chat(threadId: string | null, text: string, model: string, signal?: AbortSignal): Promise<ChatMessage[]>
   health(): Promise<Health>
   agentStats(name: string): Promise<AgentStats | null>
   memoryStats(): Promise<MemoryStats>
@@ -74,6 +75,7 @@ const mockApi: OsApi = {
     return all.filter((m) => (m.text + m.source + m.kind).toLowerCase().includes(needle))
   },
   async threads() { await delay(); return structuredClone(mock.threads) },
+  async thread(id) { await delay(); return structuredClone(mock.threads.find((t) => t.id === id) ?? null) },
   async chat(_threadId, text, _model) {
     await delay(900 + Math.random() * 900)
     const reply: ChatMessage = {
@@ -236,6 +238,40 @@ function mapEvent(raw: any): OsEvent | null {
   }
 }
 
+/* --- chat: timeout + student-readable failures --- */
+
+// A turn that hasn't landed in three minutes is never landing; the composer
+// stays locked until then, so this is also the ceiling on "stuck".
+const CHAT_TIMEOUT_MS = 180_000
+
+const AI_MISSING = "The local AI isn't set up yet — download it in Settings → Local AI."
+const MODEL_MISSING = "No AI model is installed yet — download one in Settings → Local AI."
+const CHAT_FAILED = "Something went wrong talking to the AI — try again, or restart the app."
+
+// The student never sees a raw exception: the two failures they can actually
+// fix get pointed at Settings, everything else gets one honest fallback.
+function friendlyChatError(raw: unknown, status: number): string {
+  const s = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '')
+  const low = s.toLowerCase()
+  if (low.includes('no local ai') || low.includes('not installed')) return AI_MISSING
+  if (status === 404) return MODEL_MISSING
+  return CHAT_FAILED
+}
+
+function assistantSay(content: string): ChatMessage {
+  return { role: 'assistant', content, t: new Date().toISOString() }
+}
+
+function mapThreadMessages(raw: any[]): ChatMessage[] {
+  return (raw || []).map((m: any): ChatMessage => ({
+    role: m.role === 'assistant' ? 'assistant' : m.role === 'user' ? 'user' : 'memory',
+    content: m.content || '',
+    t: m.ts || '',
+    tokens: m.tokens,
+    elapsedMs: m.elapsed_ms,
+  }))
+}
+
 const realApi: OsApi = {
   async agents() {
     const [aRes, rRes] = await Promise.all([
@@ -350,45 +386,68 @@ const realApi: OsApi = {
     }))
   },
 
+  // Rail-only: one request for the whole sidebar. The summary carries everything
+  // the rail draws (title/model/stamp), so threads start with no messages and
+  // fill in via thread() when one is opened — 20 threads used to mean 21 GETs.
   async threads() {
     const res = await tryGet<any>('/llms/history', { threads: [] })
-    const summaries = (res.threads || []).slice(0, 20)
-    const full = await Promise.all(
-      summaries.map((s: any) => tryGet<any>(`/llms/history/${encodeURIComponent(s.id)}`, null)),
-    )
-    return summaries.map((s: any, i: number): ChatThread => {
-      const f = full[i]
-      const messages: ChatMessage[] = (f?.messages || []).map((m: any): ChatMessage => ({
-        role: m.role === 'assistant' ? 'assistant' : m.role === 'user' ? 'user' : 'memory',
-        content: m.content || '',
-        t: m.ts || '',
-        tokens: m.tokens,
-        elapsedMs: m.elapsed_ms,
-      }))
-      return {
-        id: s.id,
-        title: s.title || '(untitled)',
-        model: s.model || '',
-        updated: f?.updated_at || s.created_at || '',
-        messages,
-      }
-    })
+    return (res.threads || []).slice(0, 20).map((s: any): ChatThread => ({
+      id: s.id,
+      title: s.title || '(untitled)',
+      model: s.model || '',
+      updated: s.updated_at || s.created_at || '',
+      messages: [],
+    }))
   },
 
-  async chat(threadId, text, model) {
-    const res = await postSafe('/llms/chat', {
-      thread_id: threadId, messages: [{ role: 'user', content: text }], model, backend: 'ollama',
-    })
-    if (res?.error) {
-      return [{ role: 'assistant', content: `error: ${res.error}`, t: new Date().toISOString() }]
+  async thread(id) {
+    const f = await tryGet<any>(`/llms/history/${encodeURIComponent(id)}`, null)
+    if (!f) return null
+    return {
+      id: f.id || id,
+      title: f.title || '(untitled)',
+      model: f.model || '',
+      updated: f.updated_at || f.created_at || '',
+      messages: mapThreadMessages(f.messages),
     }
-    return [{
-      role: 'assistant',
-      content: res.content || '',
-      t: new Date().toISOString(),
-      tokens: res.tokens,
-      elapsedMs: res.elapsed_ms,
-    }]
+  },
+
+  async chat(threadId, text, model, signal) {
+    // Own controller so the caller's cancel and the timeout share one abort path.
+    const ctl = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; ctl.abort() }, CHAT_TIMEOUT_MS)
+    const relay = () => ctl.abort()
+    signal?.addEventListener('abort', relay)
+    try {
+      const r = await fetch('/api/llms/chat', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: threadId, messages: [{ role: 'user', content: text }], model, backend: 'ollama',
+        }),
+        signal: ctl.signal,
+      })
+      const res = await r.json().catch(() => ({}))
+      if (!r.ok || res?.error) {
+        return [assistantSay(friendlyChatError(res?.error ?? res?.detail ?? '', r.status))]
+      }
+      // 200 with nothing in it is still a dead end for the student
+      if (!String(res.content || '').trim()) return [assistantSay(CHAT_FAILED)]
+      return [{
+        role: 'assistant',
+        content: res.content,
+        t: new Date().toISOString(),
+        tokens: res.tokens,
+        elapsedMs: res.elapsed_ms,
+      }]
+    } catch {
+      // A cancel the student asked for is not an error; a timeout is.
+      if (signal?.aborted && !timedOut) return [assistantSay('Cancelled.')]
+      return [assistantSay(CHAT_FAILED)]
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', relay)
+    }
   },
 
   async health() {

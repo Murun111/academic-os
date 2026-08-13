@@ -17,11 +17,39 @@ It is never logged and the status endpoint masks it.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+
+
+def _classify_error(exc: Exception) -> str:
+    """Map a sync-time exception to a stable code the UI can show a
+    friendly message for: auth_error (bad/expired token), network_error
+    (couldn't reach Canvas at all), canvas_error (Canvas responded with
+    some other problem)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response.status_code in (401, 403):
+            return "auth_error"
+        return "canvas_error"
+    if isinstance(exc, httpx.TransportError):  # connect/timeout/DNS/etc.
+        return "network_error"
+    return "canvas_error"
+
+
+def _error_status(exc: Exception) -> int | None:
+    """Canvas's own HTTP status, when the exception carries one — lets the UI
+    show "Canvas had a problem (HTTP 500)" instead of a bare message."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    return None
+
+
+SYNC_TIMEOUT_SECONDS = 120
 
 
 def _iso_date(dt: str | None) -> str | None:
@@ -47,7 +75,11 @@ class CanvasSyncService:
         return {"base_url": "", "token": "", "last_sync": None, "last_result": None}
 
     def _save(self, cfg: dict) -> None:
-        self._path.write_text(json.dumps(cfg, indent=2))
+        """Write atomically: tmp file in the same dir, then replace — avoids a
+        half-written canvas.json if the process dies mid-write."""
+        tmp = self._path.with_name(f".{self._path.name}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps(cfg, indent=2))
+        os.replace(tmp, self._path)
 
     def set_credentials(self, base_url: str, token: str) -> dict:
         cfg = self.config()
@@ -77,11 +109,31 @@ class CanvasSyncService:
 
     # sync ---------------------------------------------------------
     async def sync(self, courses_service) -> dict:
+        """Public entry point: runs the real sync under an overall deadline so
+        a hung Canvas connection can't wedge the app forever. Per-request
+        timeouts (below) usually fire first; this is the backstop."""
+        try:
+            return await asyncio.wait_for(
+                self._sync_impl(courses_service), timeout=SYNC_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            cfg = self.config()
+            result: dict = {
+                "courses": 0, "created": 0, "updated": 0, "unchanged": 0,
+                "errors": [{"scope": "sync",
+                            "error": f"sync timed out after {SYNC_TIMEOUT_SECONDS}s",
+                            "kind": "network_error"}],
+                "error_kind": "network_error",
+            }
+            return self._finish(cfg, result)
+
+    async def _sync_impl(self, courses_service) -> dict:
         cfg = self.config()
         base, token = cfg.get("base_url") or "", cfg.get("token") or ""
         result: dict = {"courses": 0, "created": 0, "updated": 0, "unchanged": 0, "errors": []}
         if not base or not token:
-            result["errors"].append({"scope": "config", "error": "base_url and token required"})
+            result["errors"].append({"scope": "config", "error": "base_url and token required",
+                                      "kind": "config_error"})
+            result["error_kind"] = "config_error"
             return result
 
         headers = {"Authorization": f"Bearer {token}"}
@@ -96,7 +148,15 @@ class CanvasSyncService:
                 r.raise_for_status()
                 canvas_courses = r.json()
             except Exception as e:
-                result["errors"].append({"scope": "courses", "error": f"{type(e).__name__}: {e}"})
+                kind = _classify_error(e)
+                status = _error_status(e)
+                err: dict = {"scope": "courses", "error": f"{type(e).__name__}: {e}", "kind": kind}
+                if status is not None:
+                    err["status"] = status
+                result["errors"].append(err)
+                result["error_kind"] = kind
+                if status is not None:
+                    result["error_status"] = status
                 return self._finish(cfg, result)
 
             for cc in canvas_courses:
@@ -126,7 +186,8 @@ class CanvasSyncService:
                     try:
                         courses_service.set_canvas_score(course.id, score)
                     except Exception as e:  # never fail the whole sync on one grade
-                        result["errors"].append({"scope": cname, "error": f"grade: {e}"})
+                        result["errors"].append({"scope": cname, "error": f"grade: {e}",
+                                                  "kind": _classify_error(e)})
 
                 try:
                     ra = await client.get(
@@ -135,7 +196,8 @@ class CanvasSyncService:
                     ra.raise_for_status()
                     assignments = ra.json()
                 except Exception as e:
-                    result["errors"].append({"scope": cname, "error": f"{type(e).__name__}: {e}"})
+                    result["errors"].append({"scope": cname, "error": f"{type(e).__name__}: {e}",
+                                              "kind": _classify_error(e)})
                     continue
 
                 for aa in assignments:
@@ -195,8 +257,6 @@ AUTO_SYNC_INTERVAL_SECONDS = 6 * 60 * 60
 async def auto_sync_loop() -> None:
     """Background task: while the app runs and Canvas is connected, resync every
     6 hours so assignments and grades stay fresh without any clicking."""
-    import asyncio
-
     await asyncio.sleep(60)  # let the app boot; first sync a minute in
     while True:
         try:

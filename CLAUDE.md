@@ -58,6 +58,18 @@ Commands:
 
 **GPA:** pure frontend math in `webui/src/lib/gpa.ts` (letter scale, credit-weighted term GPA, `neededOnFinal`). `Course.credits` is optional — blank counts as `DEFAULT_CREDITS` (3). No GPA endpoint on the backend.
 
+**Autonomy allowlist:** moved from fork-era `~/.agentic-os/autonomy_allow.json` to `<root>/data/autonomy_allow.json`, with one-time copy migration (legacy never deleted). Test override: `agent_admin._ALLOW_FILE_OVERRIDE` / `autonomy._ALLOW_PATH_OVERRIDE`.
+
+**Credentials are fenced:** `data/connectors/` (Canvas token) is never mirrored by backup, never touched by restore, and `vault_read` returns `forbidden` for it (plus `path_escape` for `../` — mirror both guards in any new path-taking agent tool).
+
+**Config writes are atomic:** every config file (backup.json, canvas.json, ics.json, profile.json, allowlist) writes tmp + `os.replace`. New config files must follow the pattern; a bare `write_text(json.dumps(...))` on a config file is a bug.
+
+**Canvas sync errors are classified:** results carry `error_kind` (auth_error/network_error/canvas_error) + optional HTTP `status`; LmsSyncPanel maps kinds to friendly copy. Whole sync wrapped in a 120s `asyncio.wait_for`. New sync steps must classify their failures.
+
+**Deep-link contract:** `/applications?open=<id>` preselects a card, `/courses?open=<courseId>` expands a course — Calendar, Dashboard, and CommandPalette send these; the two pages read them via `useSearchParams` and clear with `replace: true`.
+
+**Bundled models are sha256-pinned** in `local_llm.MODELS`, verified post-download (mismatch deletes + errors, safe retry). New models need their hash from HuggingFace (tree API `lfs.oid`).
+
 **Agent tools:** `web.search`/`web.fetch` are plain-httpx (no camofox) and classified read-only in `autonomy.py`'s `_READ_SET`; `academics.add_application` is deliberately unlisted so the cautious posture gates it → Approvals queue. Approving executes the tool.
 
 **Agent run API:** run reply field is `id` (not `run_id`); the output field is `result`.

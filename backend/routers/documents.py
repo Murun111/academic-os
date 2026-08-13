@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from backend.services.documents import DocumentsService, KINDS, STATUSES
+from backend.services.documents import DocumentsService, DocumentsServiceError, KINDS, STATUSES
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -122,6 +122,40 @@ def bump_version(doc_id: str, body: _VersionBody) -> dict:
         item = get_service().bump_version(doc_id, note=body.note)
     except KeyError:
         return JSONResponse({"error": "not_found", "detail": doc_id}, status_code=404)
+    return {"ok": True, "item": item.to_dict()}
+
+
+@router.post("/{doc_id}/files")
+async def attach_file(doc_id: str, file: UploadFile) -> dict:
+    data = await file.read()
+    try:
+        item = get_service().attach_file(doc_id, filename=file.filename or "", data=data)
+    except KeyError:
+        return JSONResponse({"error": "not_found", "detail": doc_id}, status_code=404)
+    except DocumentsServiceError as e:
+        return JSONResponse({"error": "invalid_file", "detail": str(e)}, status_code=422)
+    return {"ok": True, "item": item.to_dict()}
+
+
+@router.get("/{doc_id}/files/{filename}")
+def download_file(doc_id: str, filename: str):
+    try:
+        path = get_service().file_path(doc_id, filename)
+    except KeyError:
+        return JSONResponse({"error": "not_found", "detail": filename}, status_code=404)
+    except DocumentsServiceError as e:
+        return JSONResponse({"error": "invalid_file", "detail": str(e)}, status_code=422)
+    return FileResponse(path, filename=path.name)
+
+
+@router.delete("/{doc_id}/files/{filename}")
+def remove_file(doc_id: str, filename: str) -> dict:
+    try:
+        item = get_service().remove_file(doc_id, filename)
+    except KeyError:
+        return JSONResponse({"error": "not_found", "detail": filename}, status_code=404)
+    except DocumentsServiceError as e:
+        return JSONResponse({"error": "invalid_file", "detail": str(e)}, status_code=422)
     return {"ok": True, "item": item.to_dict()}
 
 

@@ -117,10 +117,22 @@ async def academics_add_application(name: str, type: str = "scholarship",
 
 
 async def vault_read(path: str) -> dict:
-    """Read a file from the vault. Path is relative to the vault root."""
+    """Read a file from the vault. Path is relative to the vault root.
+
+    Refuses to read outside the vault root (path traversal).
+    Refuses to read credential files under data/connectors/.
+    """
     from pathlib import Path
     from backend.vault import resolve_vault_path
-    full = resolve_vault_path() / path
+    full = (resolve_vault_path() / path).resolve()
+    vault_root = resolve_vault_path().resolve()
+    if not str(full).startswith(str(vault_root)):
+        return {"error": "path_escape", "path": path}
+    # Disallow credential files (per CLAUDE.md)
+    connectors_dir = (vault_root / "data" / "connectors").resolve()
+    if str(full).startswith(str(connectors_dir)):
+        return {"error": "forbidden", "path": path,
+                "detail": "credential files are not readable by agents"}
     if not full.exists():
         return {"error": "not_found", "path": path}
     return {"path": path, "content": full.read_text()}

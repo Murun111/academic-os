@@ -61,7 +61,11 @@ export function Routines() {
 }
 
 function OfflineNote() {
-  return <p className="text-[12.5px] text-fail">Local model offline — start Ollama</p>
+  return (
+    <p className="text-[12.5px] text-fail">
+      The local AI isn't set up yet — download it in Settings → Local AI.
+    </p>
+  )
 }
 
 function DeadlineWatcherCard() {

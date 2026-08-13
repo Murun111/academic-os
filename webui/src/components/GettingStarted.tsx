@@ -1,7 +1,7 @@
 // First-run "start here" checklist — shows on the Dashboard until the three
 // setup steps are done (or the student hides it). No new state on the server:
 // each step's done-ness is derived from data that already loads.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, X } from 'lucide-react'
 import { Panel, PanelHead } from './ui'
@@ -24,11 +24,19 @@ export function GettingStarted({ appsCount, coursesCount, loaded }: {
   const stage = useOs((s) => s.stage)
   const openStagePicker = useOs((s) => s.openStagePicker)
   const [hidden, setHidden] = useState(() => localStorage.getItem(DISMISS_KEY) === '1')
+  const [autostartEnabled, setAutostartEnabled] = useState(false)
+
+  useEffect(() => {
+    void fetch('/api/system/autostart').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (d) setAutostartEnabled(!!d.enabled)
+    }).catch(() => {})
+  }, [])
 
   const steps: Step[] = [
     { label: 'Tell us where you are — high school, undergrad, gap year…', done: stage !== null, onClick: () => openStagePicker(true) },
     { label: 'Add your first application or scholarship', done: appsCount > 0, to: '/applications' },
     { label: 'Add your courses, or connect Canvas in Settings', done: coursesCount > 0, to: '/courses' },
+    { label: 'Turn on start-at-login so deadline reminders actually fire', done: autostartEnabled, to: '/settings' },
   ]
   const allDone = steps.every((s) => s.done)
 

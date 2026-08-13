@@ -2,7 +2,7 @@
 
 All vault I/O is redirected to tmp_path via monkeypatching
 backend.vault.resolve_vault_path.  The autonomy allowlist file is
-redirected by patching admin_mod._ALLOW_FILE.  No real iCloud or
+redirected by patching admin_mod._ALLOW_FILE_OVERRIDE.  No real iCloud or
 home-directory files are touched.
 """
 from __future__ import annotations
@@ -63,8 +63,8 @@ def tmp_vault(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def tmp_allow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the allowlist JSON file to a tmp location."""
-    allow_path = tmp_path / "home" / ".agentic-os" / "autonomy_allow.json"
-    monkeypatch.setattr(admin_mod, "_ALLOW_FILE", allow_path)
+    allow_path = tmp_path / "data-root" / "data" / "autonomy_allow.json"
+    monkeypatch.setattr(admin_mod, "_ALLOW_FILE_OVERRIDE", allow_path)
     return allow_path
 
 
@@ -170,3 +170,48 @@ async def test_autonomy_allow_accumulates_distinct_tools(tmp_allow: Path) -> Non
     assert result["ok"] is True
     assert "tool.a" in result["allowlist"]
     assert "tool.b" in result["allowlist"]
+
+
+# ── _allow_file: one-time migration from the legacy fork location ─────────────
+
+def test_allow_file_migrates_legacy_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When no new-location file exists yet but the legacy ~/.agentic-os one
+    does, _allow_file() copies it into the data root and leaves the legacy
+    file in place."""
+    data_root = tmp_path / "data-root"
+    legacy = tmp_path / "home" / ".agentic-os" / "autonomy_allow.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps(["legacy.tool"]))
+
+    monkeypatch.setattr("backend.vault.resolve_vault_path", lambda: data_root)
+    monkeypatch.setattr(admin_mod, "_LEGACY_ALLOW_FILE", legacy)
+
+    resolved = admin_mod._allow_file()
+
+    assert resolved == data_root / "data" / "autonomy_allow.json"
+    assert resolved.exists()
+    assert json.loads(resolved.read_text()) == ["legacy.tool"]
+    assert legacy.exists()  # never deleted
+
+
+def test_allow_file_no_migration_when_new_file_already_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing new-location file is never overwritten by the legacy one."""
+    data_root = tmp_path / "data-root"
+    new_file = data_root / "data" / "autonomy_allow.json"
+    new_file.parent.mkdir(parents=True, exist_ok=True)
+    new_file.write_text(json.dumps(["current.tool"]))
+
+    legacy = tmp_path / "home" / ".agentic-os" / "autonomy_allow.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps(["legacy.tool"]))
+
+    monkeypatch.setattr("backend.vault.resolve_vault_path", lambda: data_root)
+    monkeypatch.setattr(admin_mod, "_LEGACY_ALLOW_FILE", legacy)
+
+    resolved = admin_mod._allow_file()
+
+    assert json.loads(resolved.read_text()) == ["current.tool"]

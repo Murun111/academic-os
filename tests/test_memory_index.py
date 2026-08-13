@@ -345,10 +345,11 @@ def test_delete_item_removes_from_index(monkeypatch):
     _patch_embed(monkeypatch, lambda _t: None)
     item_id = idx.upsert_item(_make_item("Fact A", "Body A."))
     idx.upsert_item(_make_item("Fact B", "Body B."))
-    assert idx.delete_item(item_id) is True
+    # delete_item returns the deleted body text (for notes scrubbing), None if absent
+    assert idx.delete_item(item_id) == "Body A."
     remaining = {i.subject for i in idx.all_items()}
     assert remaining == {"Fact B"}
-    assert idx.delete_item(item_id) is False  # already gone
+    assert idx.delete_item(item_id) is None  # already gone
 
 
 def test_delete_all_wipes_everything(monkeypatch):

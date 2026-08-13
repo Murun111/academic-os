@@ -29,9 +29,9 @@ export function toLetter(pct: number): GradePoint {
 // Credit hours assumed when a course has none entered.
 export const DEFAULT_CREDITS = 3
 
-export function termGpa(
-  courses: { grade: number | null; credits: number | null }[],
-): { gpa: number | null; graded: number } {
+type GradedCourse = { grade: number | null; credits: number | null }
+
+function weightedGpa(courses: GradedCourse[]): { gpa: number | null; graded: number } {
   const graded = courses.filter((c) => c.grade != null)
   if (graded.length === 0) return { gpa: null, graded: 0 }
   let points = 0
@@ -42,6 +42,16 @@ export function termGpa(
     credits += cr
   }
   return { gpa: credits > 0 ? points / credits : null, graded: graded.length }
+}
+
+// This term only — callers pass the active (non-archived) courses.
+export function termGpa(courses: GradedCourse[]): { gpa: number | null; graded: number } {
+  return weightedGpa(courses)
+}
+
+// Every graded course on record, archived ones included.
+export function cumulativeGpa(courses: GradedCourse[]): { gpa: number | null; graded: number } {
+  return weightedGpa(courses)
 }
 
 // Grade needed on the final for `targetPct` overall, given the current grade

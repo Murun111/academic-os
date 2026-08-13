@@ -3,6 +3,7 @@
 Tests the AgentRun dataclass, RunStore persistence, and AgentRunner
 end-to-end behavior using a mock OllamaService.
 """
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -303,6 +304,40 @@ async def test_runner_marks_timeout_when_deadline_exceeded(loader, store, monkey
     run = await runner.run("echo")
     assert run.status == RunStatus.TIMEOUT
     assert "timeout" in run.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_hanging_chat_call_is_bounded_by_remaining_budget(spec_dir, tmp_path, monkeypatch):
+    """A single ollama.chat() call that never returns must not be allowed to
+    block past the run's deadline — asyncio.wait_for cancels it and the run
+    is marked TIMEOUT with a clear message, instead of the loop discovering
+    the deadline was blown only after the call eventually (uselessly)
+    returns."""
+    (spec_dir / "echo.md").write_text(
+        "---\ntype: agent\nname: echo\ndescription: echoes\ntimeout_seconds: 1\n---\nHi.\n"
+    )
+    loader = AgentLoader(spec_dir)
+    store = RunStore(tmp_path / "runs_hang.jsonl")
+
+    # MIN_CHAT_TIMEOUT_SECONDS would normally floor the per-call budget at
+    # 5s; monkeypatch it down so this test doesn't have to wait that long —
+    # timeout_seconds: 1 alone gives it a real ~1s budget to cancel within.
+    monkeypatch.setattr(AgentRunner, "MIN_CHAT_TIMEOUT_SECONDS", 0.05)
+
+    async def hang(*args, **kwargs):
+        await asyncio.sleep(999)
+
+    svc = MagicMock(spec=OllamaService)
+    svc.chat = AsyncMock(side_effect=hang)
+
+    monkeypatch.setattr("backend.services.events.publish", lambda ev: None)
+    monkeypatch.setattr("backend.services.notify.notify", lambda *a, **kw: None)
+
+    runner = AgentRunner(svc, loader, store)
+    run = await runner.run("echo", trigger="manual")
+
+    assert run.status == RunStatus.TIMEOUT
+    assert "didn't finish" in run.error
 
 
 @pytest.mark.asyncio

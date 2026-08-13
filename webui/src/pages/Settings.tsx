@@ -12,6 +12,13 @@ import { TRACKS, TRACK_ORDER, trackApplies, trackConfig, daysToTest } from '../l
 import { study } from '../lib/studyApi'
 
 export function Settings() {
+  const [dataPath, setDataPath] = useState('~/.academic-os')
+  useEffect(() => {
+    void fetch('/api/meta').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (d?.data_path) setDataPath(d.data_path)
+    }).catch(() => {})
+  }, [])
+
   const stage = useOs((s) => s.stage)
   const userName = useOs((s) => s.userName)
   const track = useOs((s) => s.track)
@@ -216,6 +223,10 @@ export function Settings() {
             Once a day while the app is running, a Mac notification sums up everything due in
             the next 7 days. Nothing is sent anywhere — it's your Mac talking to you.
           </p>
+          <p className="mt-1 text-[12px] text-low">
+            Reminders fire while the app is running — turn on "Start at login" below so they
+            work every day.
+          </p>
           <div className="mt-3 flex items-center gap-3">
             <Btn
               onClick={async () => {
@@ -250,7 +261,7 @@ export function Settings() {
           <p className="mb-1 text-[12.5px] text-mid">
             Everything is stored in one folder on this computer — nothing is uploaded anywhere.
           </p>
-          <Mono className="text-low">~/.academic-os</Mono>
+          <Mono className="text-low">{dataPath}</Mono>
           <p className="mt-2 text-[12px] text-low">
             Back it up by copying that folder. Deleting the app never deletes your data.
           </p>
