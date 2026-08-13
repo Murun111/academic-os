@@ -19,6 +19,9 @@ export interface TrackConfig {
   // overrides the stage's requirement templates for these types
   requirementTemplates?: Partial<Record<ApplicationType, string[]>>
   studyPlan?: StudyPlanStep[] // seeded into the Study planner, anchored to the exam date
+  // med/dental cycles: secondary applications land between Submitted and
+  // Interview — adds a "Secondaries" column to the board for these tracks
+  secondaries?: boolean
 }
 
 export const TRACKS: Record<Track, TrackConfig> = {
@@ -26,6 +29,7 @@ export const TRACKS: Record<Track, TrackConfig> = {
     label: 'Pre-med',
     tagline: 'MCAT, then med school applications',
     exam: 'MCAT',
+    secondaries: true,
     appsTitle: 'Med Schools',
     appsSub: 'med schools · scholarships · deadlines',
     requirementTemplates: {
@@ -43,6 +47,9 @@ export const TRACKS: Record<Track, TrackConfig> = {
     label: 'Pre-law',
     tagline: 'LSAT, then law school applications',
     exam: 'LSAT',
+    // top law schools have a post-submission round too (Kira assessments,
+    // interview-invite screens, "why us" addenda) — same board shape
+    secondaries: true,
     appsTitle: 'Law Schools',
     appsSub: 'law schools · scholarships · deadlines',
     requirementTemplates: {
@@ -60,6 +67,7 @@ export const TRACKS: Record<Track, TrackConfig> = {
     label: 'Pre-dental',
     tagline: 'DAT, then dental school applications',
     exam: 'DAT',
+    secondaries: true,
     appsTitle: 'Dental Schools',
     appsSub: 'dental schools · scholarships · deadlines',
     requirementTemplates: {

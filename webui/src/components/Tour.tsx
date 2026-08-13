@@ -45,7 +45,13 @@ const STEPS: TourStep[] = [
   {
     target: '[data-tour="apps-board"]',
     title: 'Drag cards forward',
-    body: 'The board runs Researching → Preparing → Submitted → Interview → Decision. Drag cards between columns as you make progress. Click any card to open it: checklist, description, deadline, fees and award amounts.',
+    body: 'The board runs Researching → Preparing → Submitted → Interview → Decision. Drag cards between columns as you make progress. Click any card to open it: checklist, description, deadline, fees and award amounts. Done with one? Archive it from the card — it leaves the board but stays in your records.',
+  },
+  {
+    route: '/courses',
+    target: '[data-tour="courses-add"]',
+    title: 'Classes and grades',
+    body: 'Add classes by hand, or connect Canvas in Settings and courses, assignments, and grades sync in on their own. Open a class to set credit hours and ask the what-if calculator what you need on the final. Your GPA appears up top once grades exist.',
   },
   {
     route: '/study',
@@ -57,6 +63,18 @@ const STEPS: TourStep[] = [
     target: '[data-tour="study-week"]',
     title: 'The week at a glance',
     body: 'All seven days, no scrolling. The dots tell you what each item is — amber for application deadlines, green for assignments, gray for your tasks. Check tasks off right here.',
+  },
+  {
+    route: '/calendar',
+    target: '[data-tour="calendar-grid"]',
+    title: 'The whole month',
+    body: 'Everything with a date lands on this grid — application deadlines, assignment due dates, your tasks, even your exam. The colored dots match the legend below. Click any item to jump straight to its card.',
+  },
+  {
+    route: '/documents',
+    target: '[data-tour="docs-add"]',
+    title: 'Essays live here',
+    body: 'Write drafts right here — they save automatically and never leave this computer. The essay coach reviews your draft against the Harvard writing guide and says what to fix first. Attach transcripts and PDFs, and link each essay to its application.',
   },
   {
     route: '/approvals',
@@ -79,6 +97,10 @@ const STEPS: TourStep[] = [
     target: '[data-tour="settings-memory"]',
     title: 'You control what it remembers',
     body: 'Chats leave behind small notes the app recalls later. See every one of them here, delete any of them, or wipe the lot. Your data folder is yours — back it up by copying it.',
+  },
+  {
+    title: 'Find anything fast',
+    body: 'Press ⌘K (Ctrl+K on Windows) anywhere and start typing — a college name, a class, an essay title. Hit Enter to jump straight to it.',
   },
   {
     route: '/',
@@ -165,7 +187,7 @@ export function Tour() {
   // target is too tall for either, pin to the bottom edge — never off-screen
   let cardStyle: CSSProperties
   if (rect) {
-    const CARD_H = 250 // generous estimate; the card also gets a max-height
+    const CARD_H = 300 // generous estimate; the card also gets a max-height
     let top: number
     if (rect.bottom + PAD + 12 + CARD_H + 16 <= window.innerHeight) {
       top = rect.bottom + PAD + 12 // below

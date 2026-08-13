@@ -13,6 +13,7 @@ export const STATUS_LABEL: Record<ApplicationStatus, string> = {
   researching: 'Researching',
   preparing: 'Preparing',
   submitted: 'Submitted',
+  secondaries: 'Secondaries',
   interview: 'Interview',
   decision: 'Decision',
 }

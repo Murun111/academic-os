@@ -8,7 +8,7 @@ export type ApplicationType = (typeof APPLICATION_TYPES)[number]
 
 // pipeline order — the kanban board reads columns off this array
 export const APPLICATION_STATUSES = [
-  'researching', 'preparing', 'submitted', 'interview', 'decision',
+  'researching', 'preparing', 'submitted', 'secondaries', 'interview', 'decision',
 ] as const
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number]
 

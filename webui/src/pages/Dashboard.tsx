@@ -15,7 +15,7 @@ import { GuidePanel } from '../components/GuidePanel'
 
 const STATUS_LABEL: Record<string, string> = {
   researching: 'Researching', preparing: 'Preparing', submitted: 'Submitted',
-  interview: 'Interview', decision: 'Decision',
+  secondaries: 'Secondaries', interview: 'Interview', decision: 'Decision',
 }
 
 const stagger = NO_MOTION
@@ -177,7 +177,9 @@ export function Dashboard() {
               <Panel className="h-full">
                 <PanelHead label="pipeline" />
                 <div className="flex flex-col gap-1.5 px-5 pb-4">
-                  {APPLICATION_STATUSES.map((s) => {
+                  {APPLICATION_STATUSES.filter(
+                    (s) => s !== 'secondaries' || pipeline.some((a) => a.status === 'secondaries'),
+                  ).map((s) => {
                     const n = pipeline.filter((p) => p.status === s).length
                     return (
                       <div key={s} className="flex items-baseline justify-between">

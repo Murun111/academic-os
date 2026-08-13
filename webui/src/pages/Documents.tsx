@@ -74,9 +74,11 @@ export function Documents() {
           <p className="label-mono mb-1">essays · cv · transcripts · lors · certificates</p>
           <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Documents</h1>
         </div>
-        <Btn kind="primary" className="flex items-center gap-1.5" onClick={() => setShowAdd((s) => !s)}>
-          <Plus size={13} /> Add document
-        </Btn>
+        <span data-tour="docs-add">
+          <Btn kind="primary" className="flex items-center gap-1.5" onClick={() => setShowAdd((s) => !s)}>
+            <Plus size={13} /> Add document
+          </Btn>
+        </span>
       </div>
 
       {showAdd && (

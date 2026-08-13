@@ -110,3 +110,27 @@ def test_archived_application_leaves_upcoming_deadlines(client):
 
     client.patch(f"/api/applications/{a['id']}", json={"archived": True})
     assert client.get("/api/applications/deadlines").json()["items"] == []
+
+
+# === secondaries status (med/dental application cycle) ===
+
+
+def test_secondaries_status_between_submitted_and_interview(client):
+    from backend.services.applications import STATUSES
+
+    i = STATUSES.index
+    assert i("submitted") < i("secondaries") < i("interview")
+
+    a = _add_application(client, status="submitted")
+    r = client.patch(f"/api/applications/{a['id']}", json={"status": "secondaries"})
+    assert r.status_code == 200
+    assert r.json()["item"]["status"] == "secondaries"
+
+
+def test_secondaries_apps_still_count_toward_deadlines(client):
+    from datetime import date, timedelta
+
+    deadline = (date.today() + timedelta(days=5)).isoformat()
+    _add_application(client, deadline=deadline, status="secondaries")
+    items = client.get("/api/applications/deadlines").json()["items"]
+    assert len(items) == 1

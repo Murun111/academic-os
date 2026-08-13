@@ -122,13 +122,16 @@ export function Calendar() {
         </div>
       </div>
 
+      <div data-tour="calendar-grid">
       <Panel className="p-3">
         <div className="mb-1 grid grid-cols-7">
           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
             <span key={d} className="label-mono px-2 py-1">{d}</span>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-px">
+        {/* gap-px over an ink-tinted backdrop draws the day gridlines; ink/18
+            (not the hairline token) so the lines actually read between white cells */}
+        <div className="grid grid-cols-7 gap-px overflow-hidden rounded-[10px] border border-ink/18 bg-ink/18">
           {cells.map((c) => {
             const dayItems = byDate.get(c.date) ?? []
             const isToday = c.date === todayIso
@@ -137,10 +140,12 @@ export function Calendar() {
             return (
               <div
                 key={c.date}
-                className={`min-h-[96px] rounded-[10px] p-1.5 ${c.inMonth ? '' : 'opacity-40'} ${isToday ? 'bg-ink/5 ring-1 ring-ink/15' : ''}`}
+                className={`min-h-[96px] p-1.5 ${
+                  isToday ? 'bg-raise ring-2 ring-acc/60 ring-inset' : c.inMonth ? 'bg-raise' : 'bg-raise2'
+                }`}
               >
-                <Mono className={`block px-0.5 ${isToday ? 'text-hi' : 'text-low'}`}>{c.day}</Mono>
-                <div className="mt-0.5 flex flex-col gap-0.5">
+                <Mono className={`block px-0.5 ${isToday ? 'text-hi' : c.inMonth ? 'text-low' : 'text-low opacity-60'}`}>{c.day}</Mono>
+                <div className={`mt-0.5 flex flex-col gap-0.5 ${c.inMonth ? '' : 'opacity-60'}`}>
                   {visibleItems.map((it, n) => (
                     <button
                       key={n}
@@ -168,6 +173,7 @@ export function Calendar() {
           })}
         </div>
       </Panel>
+      </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-4 px-1">
         {(Object.keys(KIND_COLOR) as CalItem['kind'][]).map((k) => (

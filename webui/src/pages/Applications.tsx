@@ -92,7 +92,12 @@ export function Applications() {
     typeFilter === 'archived' ? []
     : typeFilter === 'all' ? deadlines
     : deadlines.filter((d) => d.type === typeFilter)
-  const columns = APPLICATION_STATUSES.map((status) => ({ status, items: visible.filter((i) => i.status === status) }))
+  // "Secondaries" (between Submitted and Interview) is a med/dental-cycle
+  // concept: show the column only for those tracks — or whenever an item
+  // already sits in it, so data is never hidden.
+  const showSecondaries = Boolean(trackCfg?.secondaries) || items.some((i) => i.status === 'secondaries')
+  const boardStatuses = APPLICATION_STATUSES.filter((s) => s !== 'secondaries' || showSecondaries)
+  const columns = boardStatuses.map((status) => ({ status, items: visible.filter((i) => i.status === status) }))
 
   const setStatus = async (id: string, status: ApplicationStatus) => {
     // optimistic move so the card lands in the column instantly
@@ -113,8 +118,9 @@ export function Applications() {
   }
 
   const moveStatus = async (item: Application, dir: 1 | -1) => {
-    const idx = APPLICATION_STATUSES.indexOf(item.status)
-    const next = APPLICATION_STATUSES[idx + dir]
+    // advance along the VISIBLE columns, so non-med tracks skip Secondaries
+    const idx = boardStatuses.indexOf(item.status)
+    const next = boardStatuses[idx + dir]
     if (!next) return
     await applicationsApi.update(item.id, { status: next })
     await load()
@@ -299,12 +305,14 @@ export function Applications() {
       {visible.length === 0 ? (
         <EmptyState title="No applications yet." hint="Add your first application to start the pipeline." />
       ) : (
-        <div data-tour="apps-board" className="overflow-x-auto pb-2">
-          <div className="flex min-w-max gap-3">
+        // columns share the width equally — the whole board always fits with no
+        // horizontal scroll, whether 5 columns or 6 (Secondaries tracks)
+        <div data-tour="apps-board" className="pb-2">
+          <div className="flex gap-2.5">
             {columns.map(({ status, items: colItems }) => (
               <div
                 key={status}
-                className={`w-[200px] shrink-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
+                className={`min-w-0 flex-1 basis-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
                 onDragOver={(e) => {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'

@@ -84,6 +84,22 @@ body,
 body {
   background: var(--color-deep);
   color: var(--color-hi);
+}
+
+/* Light mode only: a whisper of cream — brightest at the top, warming gently
+   toward the bottom. The JS theme resolver always stamps data-theme='dark'
+   for night (explicit or system), so this never leaks into dark mode. */
+:root:not([data-theme='dark']) body {
+  background: linear-gradient(
+      170deg,
+      oklch(0.99 0.004 100) 0%,
+      oklch(0.968 0.014 90) 45%,
+      oklch(0.936 0.032 85) 100%
+    )
+    fixed;
+}
+
+body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;

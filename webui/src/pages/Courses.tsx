@@ -162,9 +162,11 @@ export function Courses() {
           <p className="label-mono mb-1">courses · assignments · grades</p>
           <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Courses</h1>
         </div>
-        <Btn kind="primary" onClick={() => setShowAddCourse((v) => !v)}>
-          <span className="flex items-center gap-1.5"><Plus size={13} /> Add course</span>
-        </Btn>
+        <span data-tour="courses-add">
+          <Btn kind="primary" onClick={() => setShowAddCourse((v) => !v)}>
+            <span className="flex items-center gap-1.5"><Plus size={13} /> Add course</span>
+          </Btn>
+        </span>
       </div>
 
       <GpaPanel courses={active} allCourses={courses} />

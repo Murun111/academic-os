@@ -16,7 +16,7 @@ from typing import Optional
 
 
 TYPES = ("undergrad", "grad", "scholarship", "exchange")
-STATUSES = ("researching", "preparing", "submitted", "interview", "decision")
+STATUSES = ("researching", "preparing", "submitted", "secondaries", "interview", "decision")
 DECISION_RESULTS = ("", "accepted", "rejected", "waitlisted")
 
 
