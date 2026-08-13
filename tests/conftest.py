@@ -5,6 +5,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_data_root(monkeypatch, tmp_path_factory):
+    """Point ACADEMIC_OS_DATA at a throwaway dir for EVERY test, so nothing in
+    the suite can write into the user's real ~/.academic-os. (Discovered the
+    hard way: tests that chat through llm_hub save real thread files.) Tests
+    that want their own root still win — their monkeypatch.setenv runs after
+    this one. Services cached via a router's get_service() must still be reset
+    per-test (reset_service()), as before.
+    """
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path_factory.mktemp("data-root")))
+
+
+@pytest.fixture(autouse=True)
 def _disable_critic_by_default(monkeypatch):
     """The critic (backend.services.critic) fires a live Ollama call on every
     successful agent run. Disable it across the suite so runner tests stay

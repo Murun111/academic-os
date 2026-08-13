@@ -40,6 +40,10 @@ Commands:
 
 **Track-aware UI:** second axis (pre-med/pre-law/…) in `webui/src/lib/trackConfig.ts`, same data-only rule. Only applies when `trackApplies(stage)` (undergrad/beyond). Track overrides layer on top of stage config (`trackCfg?.x ?? cfg.x`).
 
+**Chat has TWO Ollama clients:** the Chat tab goes through `llm_hub.OllamaBackend`; essay feedback/agents go through `backend/ollama.py OllamaService`. Both must carry the bundled-llama fallback — a fix in one does not fix the other. Chat threads live at `<root>/data/llm_threads/` via `_threads_dir()` (`THREADS_DIR` is a test override, None in prod — was hardcoded `~/.agentic-os/`, never reintroduce).
+
+**Tests are data-root isolated in conftest:** autouse `_isolate_data_root` points ACADEMIC_OS_DATA at tmp for every test. Before it existed, suite runs wrote real thread files into the user's data root.
+
 **Memory lives in the data root:** index at `<root>/data/memory/index.db`, notes under `<root>/notes/memory/`. `memory_index.DB_PATH`/`trajectory_memory.DB_PATH` are test overrides (None in prod — resolved via vault). The fork originally hardcoded `~/.agentic-os/` — never reintroduce that. Settings has the privacy view (list/delete/forget-all via /api/memory/items).
 
 **Kill by exact PID, not `lsof -ti:PORT | head -1`:** Chrome connections also show up on the port — killing the first PID can leave the old server running and serving stale routes (SPA catch-all answers unknown /api paths with HTML).

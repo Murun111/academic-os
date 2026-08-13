@@ -60,9 +60,20 @@ export function Chat() {
     setDraft('')
     setBusy(true)
     const mine: ChatMessage = { role: 'user', content: text, t: new Date().toISOString() }
+    // No thread yet (fresh install, or everything deleted): create one on the
+    // fly — otherwise the message has nowhere to land and silently vanishes.
+    let id = activeId
+    if (!id || !threads.some((t) => t.id === id)) {
+      id = `local_${Date.now()}`
+      setThreads((ts) => [
+        { id: id as string, title: 'new thread', model, updated: mine.t, messages: [] },
+        ...ts,
+      ])
+      setActiveId(id)
+    }
     setThreads((ts) =>
       ts.map((t) =>
-        t.id === activeId
+        t.id === id
           ? {
               ...t,
               // first message names the thread
@@ -74,8 +85,8 @@ export function Chat() {
       ),
     )
     try {
-      const replies = await api.chat(activeId, text, model)
-      setThreads((ts) => ts.map((t) => (t.id === activeId ? { ...t, messages: [...t.messages, ...replies] } : t)))
+      const replies = await api.chat(id, text, model)
+      setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, messages: [...t.messages, ...replies] } : t)))
     } finally {
       setBusy(false)
     }
@@ -113,7 +124,13 @@ export function Chat() {
 
       {/* conversation */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto pt-1 pb-4">
+        {/* stable gutter on BOTH edges: with macOS "always show scrollbars" the
+            scrollbar otherwise eats ~15px off the right only, leaving the message
+            column narrower than — and off-centre from — the composer below it. */}
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto pt-1 pb-4 [scrollbar-gutter:stable_both-edges]"
+        >
           {!active || active.messages.length === 0 ? (
             <EmptyState title="Say something." hint="Ask about your deadlines, essays, or courses." />
           ) : (

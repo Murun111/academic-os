@@ -117,6 +117,22 @@ def _http_get_json(url: str, timeout: int = 3) -> dict | None:
         return None
 
 
+# House style for the bundled llama.cpp model. The small fallback model
+# (qwen2.5-0.5b) drifts into social-media voice — emoji, hashtags, stray
+# slashes — when handed a bare user turn with llama-server's default
+# sampling. This constrains voice; the sampling params below constrain
+# entropy. Neither substitutes for installing the 4B model.
+_BUNDLED_STYLE = (
+    "You are the assistant inside Academic OS, a student planning app.\n"
+    "Write in plain, complete English sentences.\n"
+    "Never use emoji, hashtags, or decorative symbols.\n"
+    "Never emit stray punctuation, slashes, or code comments unless the user "
+    "asked for code.\n"
+    "Prefer two or three short sentences over a list. If you do not know "
+    "something, say so plainly in one sentence."
+)
+
+
 # ── Ollama ────────────────────────────────────────────────────────────
 class OllamaBackend(Backend):
     name = "ollama"
@@ -130,6 +146,17 @@ class OllamaBackend(Backend):
         d = _http_get_json(f"{self.base}/api/tags")
         ms = int((time.time() - t0) * 1000)
         if not d:
+            # No Ollama — offer the bundled llama.cpp model if it's installed,
+            # so the Chat picker shows something real instead of an empty list.
+            from backend.services import local_llm
+            if local_llm.binary_path() is not None and local_llm.installed_model() is not None:
+                return ProbeResult(
+                    online=True,
+                    message="bundled local AI (llama.cpp)",
+                    account="local",
+                    models=[ModelInfo(id="local ai", label="Local AI (bundled)")],
+                    latency_ms=ms,
+                )
             return ProbeResult(online=False, message=f"not reachable at {self.base}")
         models = [ModelInfo(id=m["name"], label=m["name"],
                             context=m.get("details", {}).get("parameter_size", ""))
@@ -164,14 +191,63 @@ class OllamaBackend(Backend):
             headers={"Content-Type": "application/json"},
         )
         t0 = time.time()
-        with urllib.request.urlopen(req, timeout=self.chat_timeout) as r:
-            d = json.loads(r.read())
+        try:
+            with urllib.request.urlopen(req, timeout=self.chat_timeout) as r:
+                d = json.loads(r.read())
+        except (urllib.error.URLError, ConnectionError):
+            # Ollama not installed/running → bundled llama-server fallback,
+            # same policy as OllamaService in backend/ollama.py.
+            return await self._bundled_chat(messages, t0)
         elapsed = int((time.time() - t0) * 1000)
         return ChatResult(
             backend=self.name, model=model,
             content=d.get("message", {}).get("content", ""),
             tokens=d.get("eval_count", 0) + d.get("prompt_eval_count", 0),
             elapsed_ms=elapsed, raw=d,
+        )
+
+    async def _bundled_chat(self, messages: list[ChatMessage], t0: float) -> ChatResult:
+        """Chat via the bundled llama.cpp server (OpenAI format)."""
+        from backend.services import local_llm
+
+        up = await asyncio.to_thread(local_llm.ensure_running)
+        if not up:
+            raise ConnectionError(
+                "no local AI: Ollama absent and bundled model not installed"
+            )
+        # House style goes first so any recall context app.py prepended still
+        # reads as context rather than as the instruction of record.
+        payload = {
+            "model": "local",
+            "messages": (
+                [{"role": "system", "content": _BUNDLED_STYLE}]
+                + [{"role": m.role, "content": m.content} for m in messages]
+            ),
+            "stream": False,
+            # llama-server defaults (temp 0.8) are far too loose for a 0.5B model.
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1,
+            "max_tokens": 512,
+        }
+        req = urllib.request.Request(
+            f"{local_llm.BASE_URL}/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        def _post() -> dict:
+            with urllib.request.urlopen(req, timeout=self.chat_timeout) as r:
+                return json.loads(r.read())
+
+        d = await asyncio.to_thread(_post)
+        msg = (d.get("choices") or [{}])[0].get("message") or {}
+        usage = d.get("usage") or {}
+        return ChatResult(
+            backend=self.name, model="local ai",
+            content=msg.get("content", ""),
+            tokens=usage.get("total_tokens", 0),
+            elapsed_ms=int((time.time() - t0) * 1000), raw=d,
         )
 
     async def chat_stream(self, messages: list[ChatMessage], model: str = "",
@@ -1039,11 +1115,22 @@ def get_backend(name: str) -> Backend:
 import json as _json
 from pathlib import Path as _Path
 
-THREADS_DIR = _Path.home() / ".agentic-os" / "llm_threads"
+# Test override; None → resolved into the app data root via backend.vault.
+# (Was hardcoded to ~/.agentic-os/ — a fork leftover that kept chat threads
+# outside the data root, invisible to backup/restore. Never reintroduce.)
+THREADS_DIR: _Path | None = None
+
+
+def _threads_dir() -> _Path:
+    if THREADS_DIR is not None:
+        return THREADS_DIR
+    from backend.vault import agentic_os_dir
+
+    return agentic_os_dir() / "data" / "llm_threads"
 
 
 def _ensure_dir() -> None:
-    THREADS_DIR.mkdir(parents=True, exist_ok=True)
+    _threads_dir().mkdir(parents=True, exist_ok=True)
 
 
 def _new_thread_id() -> str:
@@ -1055,13 +1142,13 @@ def _thread_path(tid: str) -> _Path:
     # Defensive: refuse path traversal.
     if "/" in tid or ".." in tid or not tid:
         raise ValueError("invalid thread id")
-    return THREADS_DIR / f"{tid}.json"
+    return _threads_dir() / f"{tid}.json"
 
 
 def list_threads() -> list[dict]:
     _ensure_dir()
     out: list[dict] = []
-    for p in sorted(THREADS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(_threads_dir().glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
         try:
             d = _json.loads(p.read_text())
             out.append({
