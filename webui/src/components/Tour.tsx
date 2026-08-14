@@ -45,7 +45,7 @@ const STEPS: TourStep[] = [
   {
     target: '[data-tour="apps-board"]',
     title: 'Drag cards forward',
-    body: 'The board runs Researching → Preparing → Submitted → Interview → Decision. Drag cards between columns as you make progress. Click any card to open it: checklist, description, deadline, fees and award amounts. Done with one? Archive it from the card — it leaves the board but stays in your records.',
+    body: 'The board runs Researching → Preparing → Submitted → Interview → Decision (pre-med, pre-dental, and pre-law tracks get a Secondaries column after Submitted). Drag cards forward as you make progress; click any card to open its checklist and deadline. Done with one? Archive it from the card.',
   },
   {
     route: '/courses',
@@ -97,6 +97,11 @@ const STEPS: TourStep[] = [
     target: '[data-tour="settings-memory"]',
     title: 'You control what it remembers',
     body: 'Chats leave behind small notes the app recalls later. See every one of them here, delete any of them, or wipe the lot. Your data folder is yours — back it up by copying it.',
+  },
+  {
+    target: '[data-tour="settings-update"]',
+    title: 'Updates install themselves',
+    body: 'When a new version comes out, a button appears here. One click: it downloads, checks the signature, installs, and reopens — about a minute, and your data is never touched.',
   },
   {
     title: 'Find anything fast',

@@ -4,6 +4,7 @@ import { Check, CalendarPlus, Monitor, Moon, Sun, Trash2 } from 'lucide-react'
 import { Btn, Mono, Panel, PanelHead } from '../components/ui'
 import { LmsSyncPanel } from '../components/LmsSyncPanel'
 import { LocalAiPanel } from '../components/LocalAiPanel'
+import { UpdatePanel } from '../components/UpdatePanel'
 import { useOs } from '../lib/store'
 import { profileApi } from '../lib/profileApi'
 import { memoryApi, type MemoryItem } from '../lib/memoryApi'
@@ -271,7 +272,9 @@ export function Settings() {
               <Btn>Progress report for a counselor (PDF)</Btn>
             </Link>
           </div>
-          <UpdateCheck />
+          <div data-tour="settings-update">
+            <UpdatePanel />
+          </div>
         </div>
       </Panel>
     </div>
@@ -350,58 +353,6 @@ function MemoryPanel() {
         )}
       </div>
     </Panel>
-  )
-}
-
-function UpdateCheck() {
-  const [version, setVersion] = useState('')
-  const [repo, setRepo] = useState('')
-  const [note, setNote] = useState('')
-  const [latestUrl, setLatestUrl] = useState('')
-
-  useEffect(() => {
-    void fetch('/api/meta').then((r) => (r.ok ? r.json() : null)).then((d) => {
-      if (d) { setVersion(d.version); setRepo(d.repo) }
-    }).catch(() => {})
-  }, [])
-
-  const check = async () => {
-    setNote('Checking…')
-    try {
-      const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`)
-      if (!r.ok) { setNote('Could not reach the update server.'); return }
-      const rel = await r.json()
-      const latest = String(rel.tag_name || '').replace(/^v/, '')
-      if (!latest) { setNote('No releases published yet.'); return }
-      if (latest === version) {
-        setNote(`You're on the latest version (${version}).`)
-        setLatestUrl('')
-      } else {
-        setNote(`Version ${latest} is available — you have ${version}.`)
-        setLatestUrl(rel.html_url)
-      }
-    } catch {
-      setNote('Could not check — are you offline?')
-    }
-  }
-
-  return (
-    <div className="mt-4 border-t border-hairline pt-3">
-      <div className="flex items-center gap-3">
-        <Mono className="text-low">version {version || '…'}</Mono>
-        <Btn onClick={() => void check()} disabled={!repo}>Check for updates</Btn>
-      </div>
-      {note && (
-        <p className="mt-1.5 text-[12.5px] text-mid">
-          {note}{' '}
-          {latestUrl && (
-            <a href={latestUrl} target="_blank" rel="noreferrer" className="text-hi underline decoration-dotted">
-              Download it here
-            </a>
-          )}
-        </p>
-      )}
-    </div>
   )
 }
 

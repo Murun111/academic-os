@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -268,12 +269,24 @@ class OllamaBackend(Backend):
 
     async def chat_stream(self, messages: list[ChatMessage], model: str = "",
                           options: dict | None = None) -> AsyncIterator[dict]:
-        """Stream chat tokens from Ollama via NDJSON.
-        
-        Yields dicts:
-        - {"token": <piece>} for each content chunk
-        - {"done": true, "tokens": N} at the end
-        - {"error": <msg>} on error
+        """Stream chat tokens from Ollama's NDJSON /api/chat, falling back to
+        the bundled llama-server (same policy as chat()) when Ollama is
+        unreachable.
+
+        Yields dicts matching the app-wide SSE event contract:
+        - {"delta": <text chunk>} for each content piece, as it arrives
+        - {"done": true, "message": {role, content, backend, model, tokens,
+          elapsed_ms}} once, at the end
+        - {"error": <friendly message>} on failure (terminal — no further
+          events follow)
+
+        Streams incrementally: the blocking socket read runs in a worker
+        thread and pushes each NDJSON line onto an asyncio.Queue as it
+        arrives, so deltas reach the caller in real time rather than after
+        the whole response has been read. Cancelling iteration (client
+        disconnect) raises CancelledError out of this generator normally —
+        it is not swallowed — so the caller can persist whatever partial
+        text accumulated so far.
         """
         if not model:
             raise ValueError("ollama: model is required")
@@ -290,31 +303,201 @@ class OllamaBackend(Backend):
             f"{self.base}/api/chat", data=body,
             headers={"Content-Type": "application/json"},
         )
+        t0 = time.time()
         try:
-            loop = asyncio.get_event_loop()
-            def _stream():
-                with urllib.request.urlopen(req, timeout=self.chat_timeout) as r:
-                    for line in r:
-                        if line.strip():
-                            yield json.loads(line)
-            
-            total_tokens = 0
-            async for chunk in self._async_iterate(_stream, loop):
-                if "message" in chunk and "content" in chunk["message"]:
-                    piece = chunk["message"]["content"]
-                    if piece:
-                        yield {"token": piece}
+            full = ""
+            tokens = 0
+            async for chunk in self._stream_ndjson(req, self.chat_timeout):
+                piece = chunk.get("message", {}).get("content", "")
+                if piece:
+                    full += piece
+                    yield {"delta": piece}
                 if chunk.get("done"):
-                    total_tokens = chunk.get("eval_count", 0) + chunk.get("prompt_eval_count", 0)
-                    yield {"done": True, "tokens": total_tokens}
+                    tokens = chunk.get("eval_count", 0) + chunk.get("prompt_eval_count", 0)
+        except (urllib.error.URLError, ConnectionError):
+            # Ollama not installed/running → bundled llama-server fallback,
+            # same policy as chat()/_bundled_chat above.
+            async for ev in self._bundled_chat_stream(messages, t0):
+                yield ev
+            return
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode()[:200].strip()
+            except Exception:
+                detail = ""
+            yield {"error": f"ollama rejected model {model!r} (HTTP {e.code}): {detail}"}
+            return
+        elapsed = int((time.time() - t0) * 1000)
+        yield {"done": True, "message": {
+            "role": "assistant", "content": full,
+            "backend": self.name, "model": model,
+            "tokens": tokens, "elapsed_ms": elapsed,
+        }}
+
+    async def _bundled_chat_stream(self, messages: list[ChatMessage], t0: float) -> AsyncIterator[dict]:
+        """Stream chat via the bundled llama.cpp server (OpenAI SSE format).
+
+        llama-server is OpenAI-compatible: POST /v1/chat/completions with
+        stream:true returns 'data: {...}\\n\\n' lines and a final 'data:
+        [DONE]' sentinel. Keeps the same sampling params as the non-streaming
+        _bundled_chat above. House style is injected by app.py for every
+        backend — not re-added here, same as _bundled_chat.
+        """
+        from backend.services import local_llm
+
+        up = await asyncio.to_thread(local_llm.ensure_running)
+        if not up:
+            yield {"error": "no local AI: Ollama absent and bundled model not installed"}
+            return
+        payload = {
+            "model": "local",
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "stream": True,
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1,
+            "max_tokens": 512,
+        }
+        req = urllib.request.Request(
+            f"{local_llm.BASE_URL}/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            full = ""
+            tokens = 0
+            async for line in self._stream_sse_lines(req, self.chat_timeout):
+                if line == "[DONE]":
                     break
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                choice = (chunk.get("choices") or [{}])[0]
+                piece = (choice.get("delta") or {}).get("content", "")
+                if piece:
+                    full += piece
+                    yield {"delta": piece}
+                usage = chunk.get("usage") or {}
+                if usage.get("total_tokens"):
+                    tokens = usage["total_tokens"]
         except Exception as e:
-            yield {"error": str(e)}
-    
-    async def _async_iterate(self, generator_func, loop):
-        """Helper to iterate a blocking generator in an async context."""
-        for item in await loop.run_in_executor(None, lambda: list(generator_func())):
-            yield item
+            yield {"error": f"bundled AI stream error: {e}"}
+            return
+        elapsed = int((time.time() - t0) * 1000)
+        yield {"done": True, "message": {
+            "role": "assistant", "content": full,
+            "backend": self.name, "model": "local ai",
+            "tokens": tokens, "elapsed_ms": elapsed,
+        }}
+
+    @staticmethod
+    async def _stream_ndjson(req: urllib.request.Request, timeout: float) -> AsyncIterator[dict]:
+        """Read a line-delimited-JSON HTTP response incrementally.
+
+        Runs the blocking urlopen()/readline() loop in a worker thread and
+        relays each parsed line to the calling coroutine via an
+        asyncio.Queue, so callers see chunks as they arrive rather than
+        after the whole body has been buffered. Connection errors raised
+        while opening the request propagate to the caller so it can decide
+        how to handle them (e.g. fall back to another backend).
+        """
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        _DONE = object()
+        # fut.cancel() is a no-op once the executor thread is running, so a
+        # client disconnect used to leave the model generating to completion.
+        # The stop event + closing the response from the finally block unblock
+        # the worker's read; the server sees the closed socket and halts.
+        stop = threading.Event()
+        resp_box: list = []
+
+        def _producer():
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    resp_box.append(r)
+                    for line in r:
+                        if stop.is_set():
+                            break
+                        if line.strip():
+                            try:
+                                parsed = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            loop.call_soon_threadsafe(queue.put_nowait, parsed)
+            except Exception as e:
+                if not stop.is_set():
+                    loop.call_soon_threadsafe(queue.put_nowait, ("__error__", e))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+        fut = loop.run_in_executor(None, _producer)
+        try:
+            while True:
+                item = await queue.get()
+                if item is _DONE:
+                    break
+                if isinstance(item, tuple) and item and item[0] == "__error__":
+                    raise item[1]
+                yield item
+        finally:
+            stop.set()
+            for r in resp_box:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+            if not fut.done():
+                fut.cancel()
+
+    @staticmethod
+    async def _stream_sse_lines(req: urllib.request.Request, timeout: float) -> AsyncIterator[str]:
+        """Read an OpenAI-style SSE response ('data: ...' lines) incrementally,
+        stripped of the 'data: ' prefix. Same worker-thread relay pattern as
+        _stream_ndjson, including the disconnect-cancellation contract."""
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        _DONE = object()
+        stop = threading.Event()
+        resp_box: list = []
+
+        def _producer():
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    resp_box.append(r)
+                    for raw in r:
+                        if stop.is_set():
+                            break
+                        line = raw.decode("utf-8", errors="replace").strip()
+                        if not line or line.startswith(":"):
+                            continue
+                        if line.startswith("data: "):
+                            line = line[len("data: "):]
+                        loop.call_soon_threadsafe(queue.put_nowait, line)
+            except Exception as e:
+                if not stop.is_set():
+                    loop.call_soon_threadsafe(queue.put_nowait, ("__error__", e))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+        fut = loop.run_in_executor(None, _producer)
+        try:
+            while True:
+                item = await queue.get()
+                if item is _DONE:
+                    break
+                if isinstance(item, tuple) and item and item[0] == "__error__":
+                    raise item[1]
+                yield item
+        finally:
+            stop.set()
+            for r in resp_box:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+            if not fut.done():
+                fut.cancel()
 
 
 # ── Codex (CLI) ───────────────────────────────────────────────────────

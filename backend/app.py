@@ -160,6 +160,10 @@ async def lifespan(app: FastAPI):
     )
     await app.state.ollama.close()
     app.state.agent_scheduler.stop()
+    # Terminate the bundled llama-server child (if we spawned one) — nothing
+    # else stops it on normal shutdown, and it would outlive this process.
+    from backend.services import local_llm
+    local_llm.stop()
 
 
 # Active WebSocket connections — the watcher fans out events to all of them.
@@ -233,11 +237,13 @@ from backend.routers.profile import router as profile_router  # noqa: E402
 from backend.routers.connectors import router as connectors_router  # noqa: E402
 from backend.routers.localai import router as localai_router  # noqa: E402
 from backend.routers.system import router as system_router  # noqa: E402
+from backend.routers.update import router as update_router  # noqa: E402
 
 app.include_router(system_router)
 app.include_router(profile_router)
 app.include_router(connectors_router)
 app.include_router(localai_router)
+app.include_router(update_router)
 app.include_router(applications_router)
 app.include_router(courses_router)
 app.include_router(study_router)
@@ -392,12 +398,16 @@ async def llms_chat(body: dict) -> JSONResponse:
 
 @app.post("/api/llms/chat/stream")
 async def llms_chat_stream(body: dict):
-    """Stream chat tokens via SSE from Ollama or Nous backends.
+    """Stream chat via SSE. Dispatches through llm_hub.get_backend() for every
+    backend — the Chat tab never touches app.state.ollama (that OllamaService
+    is reserved for essay feedback and has no streaming bundled fallback).
 
     Body: {"backend": "ollama|nous", "model": "...", "messages": [...], "thread_id": optional}
-    Emits: data: {"token": <piece>}  per content chunk
-           data: {"done": true, "thread_id": <tid>, "content": <full>, "tokens": N}  at end
-    Supported backends: "ollama", "nous"
+    Emits the app-wide SSE contract, one JSON object per 'data:' line:
+      {"delta": <text chunk>}
+      {"done": true, "thread_id": <tid>, "message": {role, content, backend, model, tokens, elapsed_ms}}
+      {"error": <friendly message>}   (terminal)
+    Client disconnect cancels generation; the partial turn is still persisted.
     """
     backend_name = body.get("backend", "")
     model = body.get("model", "")
@@ -416,43 +426,48 @@ async def llms_chat_stream(body: dict):
     )
     user_text = last_user["content"] if last_user else ""
 
+    llm_backend = get_backend(backend_name)
+    llm_msgs = [ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs]
+    t0 = time.time()
+
+    def _persist(full: str) -> str | None:
+        try:
+            return save_thread(thread_id, backend_name, model or "", user_text, full)
+        except Exception as persist_err:
+            print(f"[llm_hub] stream persist failed: {persist_err}")
+            return thread_id
+
     async def gen():
         full = ""
-        total_tokens = 0
+        message = None
         try:
-            if backend_name == "ollama":
-                from backend.ollama import ChatMessage as OllamaChatMessage
-                oll_msgs = [OllamaChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs]
-                async for chunk in app.state.ollama.stream_chat(messages=oll_msgs):
-                    # Ollama NDJSON: {"message": {"role": "assistant", "content": "<piece>"}, ...}
-                    piece = chunk.get("message", {}).get("content", "")
-                    if piece:
-                        full += piece
-                        yield f"data: {json.dumps({'token': piece})}\\n\\n"
-            elif backend_name == "nous":
-                from backend.llm_hub import ChatMessage as LLMChatMessage, get_backend
-                nous_backend = get_backend("nous")
-                llm_msgs = [LLMChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs]
-                async for chunk in nous_backend.chat_stream(messages=llm_msgs, model=model):
-                    if "error" in chunk:
-                        yield f"data: {json.dumps(chunk)}\\n\\n"
-                        break
-                    if "token" in chunk:
-                        piece = chunk["token"]
-                        full += piece
-                        yield f"data: {json.dumps({'token': piece})}\\n\\n"
-                    if "done" in chunk and chunk["done"]:
-                        total_tokens = chunk.get("tokens", 0)
-                        break
-            # Persist the completed turn (best-effort).
-            tid = thread_id
-            try:
-                tid = save_thread(thread_id, backend_name, model or "", user_text, full)
-            except Exception as persist_err:
-                print(f"[llm_hub] stream persist failed: {persist_err}")
-            yield f"data: {json.dumps({'done': True, 'thread_id': tid, 'content': full, 'tokens': total_tokens})}\\n\\n"
+            async for chunk in llm_backend.chat_stream(messages=llm_msgs, model=model):
+                if "error" in chunk:
+                    yield f"data: {json.dumps({'error': chunk['error']})}\n\n"
+                    return
+                # llm_hub contract shape, with legacy {"token"} (nous) normalized
+                piece = chunk.get("delta") or chunk.get("token") or ""
+                if piece:
+                    full += piece
+                    yield f"data: {json.dumps({'delta': piece})}\n\n"
+                if chunk.get("done"):
+                    message = chunk.get("message")
+                    break
+            if message is None:
+                message = {
+                    "role": "assistant", "content": full,
+                    "backend": backend_name, "model": model,
+                    "tokens": 0, "elapsed_ms": int((time.time() - t0) * 1000),
+                }
+            tid = _persist(message.get("content", full))
+            yield f"data: {json.dumps({'done': True, 'thread_id': tid, 'message': message})}\n\n"
+        except asyncio.CancelledError:
+            # client went away mid-stream — keep whatever text arrived
+            if full:
+                _persist(full)
+            raise
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\\n\\n"
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

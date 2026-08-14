@@ -25,10 +25,42 @@ jobs:
           cd webui && npm ci && cd ..
           python -m venv .venv
           .venv/bin/pip install -r requirements.txt pyinstaller
-      - name: Build DMG
-        run: bash scripts/build_dmg.sh
+      # All third-party code (npm build, PyInstaller + deps) runs in this
+      # step, BEFORE the signing certificate exists anywhere on the runner —
+      # a compromised dependency can't sign its own payload or exfiltrate an
+      # unlocked keychain that isn't there yet.
+      - name: Build app (unsigned prep — webui + freeze)
+        run: STAGE=prep bash scripts/build_dmg.sh
+      - name: Import signing certificate
+        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          echo "$MACOS_CERT_P12" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          rm -f "$CERT_PATH"
+      - name: Package, sign, notarize
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: STAGE=package bash scripts/build_dmg.sh
       - uses: actions/upload-artifact@v4
         with: { name: AcademicOS-macOS, path: dist/AcademicOS.dmg }
+      - name: Clean up keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12"
 
   build-windows:
     runs-on: windows-latest
@@ -45,18 +77,17 @@ jobs:
         run: |
           python -m venv .venv
           .venv/Scripts/pip install -r requirements.txt pyinstaller
-      - name: Fetch llama-server (best effort)
+      - name: Fetch llama-server (sha256-pinned)
         shell: bash
         run: |
           mkdir -p vendor/llama
-          for asset in "llama-$LLAMA_BUILD-bin-win-cpu-x64.zip" "llama-$LLAMA_BUILD-bin-win-avx2-x64.zip"; do
-            if curl -fsSL "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/$asset" -o llama.zip; then
-              unzip -o llama.zip -d llama-tmp
-              find llama-tmp -name 'llama-server.exe' -exec cp {} vendor/llama/ \;
-              find llama-tmp -name '*.dll' -exec cp {} vendor/llama/ \;
-              break
-            fi
-          done
+          if curl -fsSL "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-win-cpu-x64.zip" -o llama.zip; then
+            echo "8791c5e11cac85b0192b147350731c18bc3621c13a07f4c3932c2ea86c949596  llama.zip" | sha256sum -c - \
+              || { echo "FATAL: llama-server zip sha256 mismatch"; exit 1; }
+            unzip -o llama.zip -d llama-tmp
+            find llama-tmp -name 'llama-server.exe' -exec cp {} vendor/llama/ \;
+            find llama-tmp -name '*.dll' -exec cp {} vendor/llama/ \;
+          fi
           ls vendor/llama || echo "no llama binaries — app will run without bundled AI"
       - name: Freeze backend
         shell: bash
@@ -94,11 +125,14 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -r requirements.txt pyinstaller
-      - name: Fetch llama-server (best effort)
+      - name: Fetch llama-server (sha256-pinned)
         run: |
           mkdir -p vendor/llama
           if curl -fsSL "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-ubuntu-x64.tar.gz" -o llama.tgz; then
-            tar -xzf llama.tgz -C /tmp/llama-x || mkdir -p /tmp/llama-x
+            echo "62171466b66c3e42e3bbb5168044f181a476dc779ec078debf62dc3a61c1efe2  llama.tgz" | sha256sum -c - \
+              || { echo "FATAL: llama-server tarball sha256 mismatch"; exit 1; }
+            mkdir -p /tmp/llama-x
+            tar -xzf llama.tgz -C /tmp/llama-x
             find /tmp/llama-x -name 'llama-server' -exec cp {} vendor/llama/ \; || true
             find /tmp/llama-x -name '*.so*' -exec cp {} vendor/llama/ \; || true
           fi

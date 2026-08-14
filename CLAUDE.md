@@ -78,6 +78,8 @@ Commands:
 
 **Launcher:** `scripts/start.command` — double-clickable, first run creates the venv, close window to quit.
 
+**Signing/notarization:** `build_dmg.sh` auto-signs when a "Developer ID Application" identity is in the keychain (team 4ULN66CM6Q); notarization prefers `NOTARY_APPLE_ID`/`NOTARY_PASSWORD` env (CI) over the local notarytool keychain profile `academicos`, then staples. `SIGN_ID=""` forces unsigned. `STAGE=prep|package` splits the build so CI imports the cert only AFTER npm/PyInstaller ran (keychain-exfiltration hardening) — keep that ordering. CI secrets: MACOS_CERT_P12/MACOS_CERT_PASSWORD/NOTARY_APPLE_ID/NOTARY_PASSWORD. First signed CI run still unverified until the next tag builds.
+
 ## Architecture
 
 **Backend:**

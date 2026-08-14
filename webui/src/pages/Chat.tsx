@@ -2,12 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowUp, Brain, Plus } from 'lucide-react'
 import { api } from '../lib/api'
+import { streamChat } from '../lib/chatStream'
 import type { ChatMessage, ChatThread } from '../lib/types'
 import { EmptyState, Mono, timeAgo } from '../components/ui'
 
 // shown when no Ollama models are installed — the backend falls back to the
 // bundled local AI regardless of the requested model name
 const FALLBACK_MODELS = ['local ai']
+
+function assistantSay(content: string): ChatMessage {
+  return { role: 'assistant', content, t: new Date().toISOString() }
+}
 
 // A rail refetch carries summaries only (api.threads sends no messages), so keep
 // whatever content is already loaded, and keep threads that exist only in this
@@ -154,9 +159,37 @@ export function Chat() {
     )
     const ctl = new AbortController()
     abortRef.current = ctl
+    // a live placeholder the deltas stream into; only rendered once it has
+    // content (see the messages.map below) so it doesn't flash an empty bubble
+    setThreads((ts) =>
+      ts.map((t) => (t.id === id ? { ...t, messages: [...t.messages, assistantSay('')] } : t)),
+    )
+    const appendDelta = (piece: string) => {
+      setThreads((ts) =>
+        ts.map((t) => {
+          if (t.id !== id) return t
+          const msgs = t.messages.slice()
+          const last = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = { ...last, content: last.content + piece }
+          return { ...t, messages: msgs }
+        }),
+      )
+    }
     try {
-      const replies = await api.chat(id, text, model, ctl.signal)
-      setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, messages: [...t.messages, ...replies] } : t)))
+      const result = await streamChat(id, text, model, appendDelta, ctl.signal)
+      if (result.kind === 'fallback') {
+        // older backend with no /stream route — drop the placeholder and use
+        // the classic non-streaming call so the student sees no difference
+        setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, messages: t.messages.slice(0, -1) } : t)))
+        const replies = await api.chat(id, text, model, ctl.signal)
+        setThreads((ts) => ts.map((t) => (t.id === id ? { ...t, messages: [...t.messages, ...replies] } : t)))
+      } else if (result.kind === 'streamed') {
+        setThreads((ts) =>
+          ts.map((t) => (t.id === id ? { ...t, messages: [...t.messages.slice(0, -1), result.message] } : t)),
+        )
+      }
+      // 'aborted': the placeholder already holds whatever text streamed in —
+      // leave it as the final bubble, no error text appended
     } finally {
       abortRef.current = null
       setBusy(false)
@@ -165,6 +198,11 @@ export function Chat() {
       void refresh(id)
     }
   }
+
+  // while busy, the last message is the streaming placeholder — once it has
+  // text, the "thinking…" bar above hands off to the bubble itself
+  const lastMsg = active?.messages[active.messages.length - 1]
+  const streamStarted = !!lastMsg && lastMsg.role === 'assistant' && lastMsg.content !== ''
 
   return (
     <div className="mx-auto flex h-full max-w-[1100px] gap-5">
@@ -214,7 +252,11 @@ export function Chat() {
             <EmptyState title="Say something." hint="Ask about your deadlines, essays, or courses." />
           ) : (
             <div className="flex flex-col gap-4">
-              {active.messages.map((m, i) =>
+              {active.messages
+                // the still-empty streaming placeholder shouldn't flash a blank
+                // bubble — the "thinking…" row below covers that moment instead
+                .filter((m) => !(m.role === 'assistant' && m.content === ''))
+                .map((m, i) =>
                 m.role === 'memory' ? (
                   <div key={i} className="flex items-center gap-2 self-start rounded-full border border-hairline px-3 py-1">
                     <Brain size={12} className="text-low" />
@@ -244,8 +286,14 @@ export function Chat() {
                 ),
               )}
               {busy && (
-                <div className="panel flex items-center gap-3 self-start rounded-2xl px-4 py-2.5">
-                  <span className="font-mono text-[12px] text-low">thinking…</span>
+                <div
+                  className={`flex items-center gap-3 self-start ${
+                    streamStarted ? 'px-1' : 'panel rounded-2xl px-4 py-2.5'
+                  }`}
+                >
+                  {/* once tokens are streaming in, the growing bubble above already
+                      shows progress — this row's only job is the cancel affordance */}
+                  {!streamStarted && <span className="font-mono text-[12px] text-low">thinking…</span>}
                   <button
                     onClick={() => abortRef.current?.abort()}
                     className="font-mono text-[11px] text-low underline-offset-2 transition-colors hover:text-hi hover:underline"
