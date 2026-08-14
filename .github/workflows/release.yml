@@ -14,6 +14,10 @@ env:
 jobs:
   build-macos:
     runs-on: macos-14
+    env:
+      # secrets.* is not a legal context in step-level `if:` (GitHub rejects
+      # the whole file at parse time) — evaluate it here and gate on env.
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,7 +36,7 @@ jobs:
       - name: Build app (unsigned prep — webui + freeze)
         run: STAGE=prep bash scripts/build_dmg.sh
       - name: Import signing certificate
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: env.HAS_SIGNING_CERT == 'true'
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
