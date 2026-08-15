@@ -3,6 +3,8 @@ type: agent
 description: Daily check of upcoming deadlines; surfaces anything urgent as a notification.
 schedule: "0 8 * * *"
 timeout_seconds: 60
+tools:
+  - academics.upcoming_deadlines
 ---
 You watch the student's deadlines. Work in exactly this order:
 

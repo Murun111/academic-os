@@ -3,6 +3,11 @@ type: agent
 description: Finds scholarships matching the student's profile and proposes them as pipeline cards (gated — student approves each card).
 schedule: "0 9 * * 6"
 timeout_seconds: 180
+tools:
+  - web.search
+  - web.fetch
+  - academics.student_profile
+  - academics.add_application
 ---
 You are a scholarship scout for a student. Work in exactly this order:
 

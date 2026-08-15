@@ -26,9 +26,9 @@ export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
     setBusy(false)
   }
 
-  const removeFeed = async (feed: string) => {
+  const removeFeed = async (id: number) => {
     setBusy(true)
-    await connectorsApi.removeFeed(feed)
+    await connectorsApi.removeFeed(id)
     await refresh()
     setBusy(false)
   }
@@ -77,9 +77,9 @@ export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
         {cfg && cfg.feeds.length > 0 && (
           <div className="mb-3 flex flex-col gap-1">
             {cfg.feeds.map((f) => (
-              <div key={f} className="flex items-center gap-2 rounded-[8px] bg-ink/4 px-2.5 py-1.5">
-                <Mono className="flex-1 truncate text-low">{f}</Mono>
-                <button onClick={() => void removeFeed(f)} title="Remove feed" className="text-low hover:text-fail">
+              <div key={f.id} className="flex items-center gap-2 rounded-[8px] bg-ink/4 px-2.5 py-1.5">
+                <Mono className="flex-1 truncate text-low">{f.host || 'calendar feed'} · configured</Mono>
+                <button onClick={() => void removeFeed(f.id)} title="Remove feed" className="text-low hover:text-fail">
                   <Trash2 size={12} />
                 </button>
               </div>

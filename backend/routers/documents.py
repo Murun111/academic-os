@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Query, UploadFile
+from fastapi import APIRouter, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -125,9 +125,53 @@ def bump_version(doc_id: str, body: _VersionBody) -> dict:
     return {"ok": True, "item": item.to_dict()}
 
 
+_UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1MB read chunks while capping the accepted body
+
+
 @router.post("/{doc_id}/files")
-async def attach_file(doc_id: str, file: UploadFile) -> dict:
-    data = await file.read()
+async def attach_file(request: Request, doc_id: str, file: UploadFile) -> dict:
+    max_bytes = DocumentsService.MAX_FILE_BYTES
+
+    # Cheap check first: reject on a stated Content-Length over the cap
+    # before touching the body at all. Doesn't stop a chunked/lying
+    # Content-Length, but catches the common case for free.
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            declared = None
+        if declared is not None and declared > max_bytes:
+            return JSONResponse(
+                {
+                    "error": "invalid_file",
+                    "detail": f"file too large ({declared} bytes; max {max_bytes})",
+                },
+                status_code=422,
+            )
+
+    # Real guard: read in bounded chunks and abort the moment the running
+    # total exceeds the cap, so an oversized or lying-Content-Length body
+    # can't be spooled into memory in full before we notice.
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            await file.close()
+            return JSONResponse(
+                {
+                    "error": "invalid_file",
+                    "detail": f"file too large ({total}+ bytes; max {max_bytes})",
+                },
+                status_code=422,
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
+
     try:
         item = get_service().attach_file(doc_id, filename=file.filename or "", data=data)
     except KeyError:

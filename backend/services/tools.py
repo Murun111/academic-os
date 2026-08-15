@@ -9,7 +9,9 @@ Adding a new tool = add a ToolSpec to TOOLS. No new wiring needed.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from backend.services.calendar import AppleCalendarService
@@ -116,21 +118,35 @@ async def academics_add_application(name: str, type: str = "scholarship",
                                  org=org, url=url, notes=notes)
 
 
+def _realpath(p: Path) -> Path:
+    """Resolve symlinks + '..' without requiring the path to exist
+    (os.path.realpath tolerates a nonexistent tail, same as Path.resolve())."""
+    return Path(os.path.realpath(p))
+
+
+def _is_within(candidate: Path, root: Path) -> bool:
+    """Containment check that is symlink-resolved AND case-folded, so the
+    fence holds on macOS's default case-insensitive filesystem (a caller
+    spelling a blocked dir as "Data/Connectors" must not slip through)."""
+    candidate_cf = Path(str(candidate).casefold())
+    root_cf = Path(str(root).casefold())
+    return candidate_cf.is_relative_to(root_cf)
+
+
 async def vault_read(path: str) -> dict:
     """Read a file from the vault. Path is relative to the vault root.
 
     Refuses to read outside the vault root (path traversal).
     Refuses to read credential files under data/connectors/.
     """
-    from pathlib import Path
-    from backend.vault import resolve_vault_path
-    full = (resolve_vault_path() / path).resolve()
-    vault_root = resolve_vault_path().resolve()
-    if not str(full).startswith(str(vault_root)):
+    from backend.vault import resolve_vault_path  # local: monkeypatchable per-test
+    vault_root = _realpath(resolve_vault_path())
+    full = _realpath(vault_root / path)
+    if not _is_within(full, vault_root):
         return {"error": "path_escape", "path": path}
     # Disallow credential files (per CLAUDE.md)
-    connectors_dir = (vault_root / "data" / "connectors").resolve()
-    if str(full).startswith(str(connectors_dir)):
+    connectors_dir = _realpath(vault_root / "data" / "connectors")
+    if _is_within(full, connectors_dir):
         return {"error": "forbidden", "path": path,
                 "detail": "credential files are not readable by agents"}
     if not full.exists():
@@ -188,14 +204,20 @@ async def vault_write(path: str, content: str) -> dict:
     """Write a file to the vault. Path is relative to the vault root.
 
     Refuses to write outside the vault root (path traversal).
+    Refuses to write under data/ (config, credentials, autonomy allowlist).
     Refuses to write to user-authored folders.
     """
-    from pathlib import Path
-    from backend.vault import resolve_vault_path
-    full = (resolve_vault_path() / path).resolve()
-    vault_root = resolve_vault_path().resolve()
-    if not str(full).startswith(str(vault_root)):
+    from backend.vault import resolve_vault_path  # local: monkeypatchable per-test
+    vault_root = _realpath(resolve_vault_path())
+    full = _realpath(vault_root / path)
+    if not _is_within(full, vault_root):
         return {"error": "path_escape", "path": path}
+    # Disallow the data/ subtree (per CLAUDE.md: autonomy_allow.json,
+    # connectors/ credentials, format.json — agents never write app config)
+    data_dir = _realpath(vault_root / "data")
+    if _is_within(full, data_dir):
+        return {"error": "forbidden", "path": path,
+                "detail": "the data/ directory is not writable by agents"}
     # Disallow user-authored folders (per CLAUDE.md)
     for blocked in ("aa) Murun", "Ascent Studios Co", "Parvis Ai", "Improvability"):
         if blocked in path:
@@ -211,12 +233,20 @@ def build_tools(
     calendar_service: AppleCalendarService | None = None,
     inbox_service: InboxService | None = None,
     browser_service: BrowserService | None = None,
+    allowed: set[str] | None = None,
 ) -> list[ToolSpec]:
-    """Build the full tool list. Services can be None (those tools become no-ops).
+    """Build the tool list. Services can be None (those tools become no-ops).
 
     We accept None rather than failing hard so the runner can start
     in a degraded state (e.g. CalDAV creds missing → calendar tools unavailable
     but the rest still work).
+
+    `allowed`, when given, is a set of registry names (e.g. {"web.search",
+    "web.fetch"}) — the returned list is filtered down to only those tools.
+    This is per-agent tool scoping: an agent's spec declares what it needs,
+    and the runner passes that set here so tools it never asked for are not
+    even offered to the model. `None` (the default) keeps full back-compat
+    behavior — every tool whose backing service is present is returned.
     """
     tools: list[ToolSpec] = []
 
@@ -535,6 +565,9 @@ def build_tools(
         },
         handler=vault_write,
     ))
+
+    if allowed is not None:
+        tools = [t for t in tools if t.name in allowed]
 
     return tools
 

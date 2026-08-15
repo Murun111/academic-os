@@ -3,11 +3,20 @@
 Plain httpx — no camofox daemon, no API keys — so it works on any student
 machine. Search uses DuckDuckGo's HTML endpoint; fetch strips a page down
 to readable text. Both are read-only.
+
+Security:
+- `fetch()` takes a model/attacker-chosen URL, so it is egress-SSRF-guarded:
+  non-http(s) schemes and loopback/private/link-local/reserved destinations
+  are refused before the request, and the final URL (after redirects) is
+  re-checked so a redirect-to-private-address can't slip the requested-body
+  back to the caller.
 """
 from __future__ import annotations
 
 import html as _html
+import ipaddress
 import re
+import socket
 from urllib.parse import unquote, urlparse, parse_qs
 
 import httpx
@@ -35,6 +44,53 @@ _OFFLINE_RESULT = {"error": "offline", "detail": "no internet connection"}
 
 def _clean(fragment: str) -> str:
     return _html.unescape(_TAG_RE.sub("", fragment)).strip()
+
+
+def _blocked_destination(ip_text: str) -> bool:
+    """True if `ip_text` (a resolved address) is loopback/private/link-local/
+    reserved and therefore not a legitimate egress target."""
+    addr = ipaddress.ip_address(ip_text.split("%", 1)[0])  # strip IPv6 zone id
+    return (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    )
+
+
+def _ssrf_guard(url: str) -> dict | None:
+    """Egress SSRF guard for a caller-supplied URL.
+
+    Returns a friendly error dict if `url` must not be fetched (bad scheme,
+    unresolvable host, or resolves to a loopback/private/link-local/reserved
+    address). Returns None when the URL is safe to fetch. Never raises —
+    a DNS failure or malformed URL is treated as "blocked", not an exception.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return {"error": "blocked_url", "url": url, "detail": "malformed URL"}
+    if parsed.scheme not in ("http", "https"):
+        return {"error": "blocked_url", "url": url,
+                "detail": f"scheme {parsed.scheme!r} is not allowed"}
+    host = parsed.hostname
+    if not host:
+        return {"error": "blocked_url", "url": url, "detail": "no hostname in URL"}
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return {"error": "blocked_url", "url": url, "detail": "could not resolve host"}
+    for info in infos:
+        ip_text = info[4][0]
+        try:
+            if _blocked_destination(ip_text):
+                return {"error": "blocked_url", "url": url,
+                        "detail": f"{host!r} resolves to a private/internal address"}
+        except ValueError:
+            return {"error": "blocked_url", "url": url, "detail": "unresolvable address"}
+    return None
 
 
 def _real_url(href: str) -> str:
@@ -65,7 +121,12 @@ async def search(query: str, limit: int = 8) -> dict:
 
 async def fetch(url: str) -> dict:
     """→ {url, final_url, text, truncated}. Text-only, scripts/nav stripped.
-    Returns an offline error dict on a connectivity failure."""
+    Returns an offline error dict on a connectivity failure, or a
+    `{"error": "blocked_url", ...}` dict if the URL (or its final,
+    post-redirect destination) is loopback/private/link-local/reserved."""
+    guard_error = _ssrf_guard(url)
+    if guard_error is not None:
+        return guard_error
     try:
         async with httpx.AsyncClient(timeout=20, headers=_UA, follow_redirects=True) as c:
             r = await c.get(url)
@@ -74,6 +135,14 @@ async def fetch(url: str) -> dict:
             final_url = str(r.url)
     except _CONNECTION_ERRORS:
         return dict(_OFFLINE_RESULT)
+    # Re-check the post-redirect destination: httpx already followed the
+    # redirect chain by this point, so this can't stop the request, but it
+    # stops a redirect-to-private-address response body from being handed
+    # back to the caller.
+    if final_url != url:
+        final_guard_error = _ssrf_guard(final_url)
+        if final_guard_error is not None:
+            return final_guard_error
     body = _BLOCK_RE.sub(" ", body)
     # keep some block structure as newlines before stripping tags
     body = re.sub(r"</(p|div|li|h[1-6]|tr|br)>", "\n", body, flags=re.I)

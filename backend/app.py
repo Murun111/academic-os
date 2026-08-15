@@ -203,6 +203,33 @@ _WS_ALLOWED_ORIGINS = {
     "http://127.0.0.1:5173",
 }
 
+# Origins allowed to send mutating (POST/PUT/PATCH/DELETE) requests to /api/*.
+# Same literal set as _WS_ALLOWED_ORIGINS by design (kept as a separate name
+# so the two can diverge later without surprise coupling).
+_CSRF_ALLOWED_ORIGINS = _WS_ALLOWED_ORIGINS
+
+
+@app.middleware("http")
+async def csrf_origin_check(request, call_next):
+    """Reject cross-origin mutating /api/* requests (CSRF defense).
+
+    A browser making a simple form POST/PUT/PATCH/DELETE from another origin
+    cannot be blocked by CORS alone (CORS only gates reading the response,
+    not whether the request fires), so this checks the Origin header
+    directly. Requests with no Origin header (curl, native clients, our own
+    test suite) are allowed through — only a browser Origin that mismatches
+    is rejected. GET/HEAD/OPTIONS and non-/api/ paths are always allowed.
+    """
+    path = request.url.path
+    if (
+        request.method not in ("GET", "HEAD", "OPTIONS")
+        and path.startswith("/api/")
+    ):
+        origin = request.headers.get("origin")
+        if origin is not None and origin not in _CSRF_ALLOWED_ORIGINS:
+            return JSONResponse({"error": "forbidden_origin"}, status_code=403)
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def block_writes_on_newer_data_format(request, call_next):
@@ -803,7 +830,18 @@ async def approvals_decide(body: dict) -> JSONResponse:
             exec_result = {"executed": False, "reason": "already executed (idempotent)"}
         else:
             try:
-                tools = app.state.agent_runner._build_tools()
+                # Scope the approval-execution tool set to the agent that
+                # requested it — never the full unscoped registry. Falls back
+                # to the requesting agent's spec so a gated tool can only run
+                # if that agent was actually scoped for it.
+                _agent_name = item.get("agent")
+                _spec = None
+                if _agent_name:
+                    try:
+                        _spec = app.state.agent_loader.get(_agent_name)
+                    except Exception:
+                        _spec = None
+                tools = app.state.agent_runner._build_tools(_spec)
                 exec_result = await execute_item(item, tools)
                 if isinstance(exec_result, dict) and exec_result.get("executed"):
                     mark_executed(item_id, str(exec_result.get("result", ""))[:200])

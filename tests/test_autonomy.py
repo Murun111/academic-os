@@ -74,10 +74,16 @@ def test_read_contains_list_or_read_allows(tool: str) -> None:
 @pytest.mark.parametrize("tool", [
     "inbox.add",
     "inbox.mark_done",
-    "vault.write",
 ])
 def test_internal_set_allows(tool: str) -> None:
     _check(classify(tool, posture="cautious"), "allow", "internal")
+
+
+def test_vault_write_is_gated_not_internal() -> None:
+    # Security fix (2026-08-14): vault.write was removed from _INTERNAL_SET so
+    # an agent can't silently overwrite vault files (e.g. the autonomy
+    # allowlist). It now falls through to unknown → gate under cautious.
+    _check(classify("vault.write", posture="cautious"), "gate", "unknown")
 
 
 # ── Deny set → deny / irreversible ────────────────────────────────────────────
@@ -146,7 +152,7 @@ def test_unknown_tool_with_args_gates() -> None:
 # ── Posture: observe ──────────────────────────────────────────────────────────
 
 def test_observe_internal_becomes_gate() -> None:
-    _check(classify("vault.write", posture="observe"), "gate", "internal")
+    _check(classify("inbox.add", posture="observe"), "gate", "internal")
 
 
 def test_observe_outward_becomes_gate() -> None:
@@ -195,18 +201,18 @@ def test_proactive_deny_keyword_stays_deny() -> None:
 
 def test_env_default_is_cautious(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_AUTONOMY", raising=False)
-    # vault.write is internal → allow under cautious
-    _check(classify("vault.write"), "allow", "internal")
+    # inbox.add is internal → allow under cautious (the env default)
+    _check(classify("inbox.add"), "allow", "internal")
 
 
 def test_env_cautious_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_AUTONOMY", "cautious")
-    _check(classify("vault.write"), "allow", "internal")
+    _check(classify("inbox.add"), "allow", "internal")
 
 
 def test_env_observe_gates_internal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_AUTONOMY", "observe")
-    _check(classify("vault.write"), "gate", "internal")
+    _check(classify("inbox.add"), "gate", "internal")
 
 
 def test_env_proactive_allows_outward(monkeypatch: pytest.MonkeyPatch) -> None:

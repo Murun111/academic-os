@@ -52,23 +52,35 @@ class FeedBody(BaseModel):
     url: HttpUrl
 
 
+class FeedRemoveBody(BaseModel):
+    id: int
+
+
 @router.get("/ics")
 def ics_status() -> dict:
-    """Feeds + last sync result."""
-    return get_ics_service().config()
+    """Feeds + last sync result. Feed URLs carry a per-student secret token,
+    so this returns each feed's id + host only, never the full URL."""
+    return get_ics_service().masked_config()
 
 
 @router.post("/ics")
 def ics_add_feed(body: FeedBody) -> dict:
     """Register a calendar-feed URL (Canvas/Moodle/Brightspace 'calendar feed')."""
-    return get_ics_service().add_feed(str(body.url))
+    get_ics_service().add_feed(str(body.url))
+    return get_ics_service().masked_config()
 
 
 @router.post("/ics/remove")
-def ics_remove_feed(body: FeedBody) -> dict:
-    """Unregister a feed. Already-synced assignments stay (they're the
-    student's data now)."""
-    return get_ics_service().remove_feed(str(body.url))
+def ics_remove_feed(body: FeedRemoveBody) -> dict:
+    """Unregister a feed by id (from GET /ics's masked list) — the full feed
+    URL never has to round-trip back from the client. Already-synced
+    assignments stay (they're the student's data now)."""
+    svc = get_ics_service()
+    svc.remove_feed_by_id(body.id)
+    # Return the MASKED config — the raw remove result carries the remaining
+    # feeds' full URLs incl. their secret tokens (same leak the add/get paths
+    # already avoid via masked_config()).
+    return svc.masked_config()
 
 
 @router.post("/ics/sync")

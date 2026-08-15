@@ -216,22 +216,48 @@ def _fetch_asset_url() -> str:
         if asset.get("name") == ASSET_NAME:
             download_url = asset.get("browser_download_url")
             if download_url:
+                if not download_url.startswith("https://"):
+                    raise UpdateError(
+                        "network_error",
+                        "The update asset URL was not https and was refused.",
+                    )
                 return download_url
     raise UpdateError("network_error", "No installer found in the latest release.")
 
 
+_MAX_DOWNLOAD_REDIRECTS = 5
+
+
 def _download(url: str, dest: Path) -> None:
+    # follow_redirects=True would let an initial https:// URL hop to plain
+    # http:// mid-download with no further check — httpx only exposes the
+    # final scheme after the fact. Instead, follow redirects manually
+    # (client default is follow_redirects=False) so every hop's scheme is
+    # checked BEFORE it's requested.
     try:
-        with httpx.stream("GET", url, follow_redirects=True, timeout=DOWNLOAD_TIMEOUT) as r:
-            r.raise_for_status()
-            total = int(r.headers.get("content-length") or 0)
-            got = 0
-            with open(dest, "wb") as f:
-                for chunk in r.iter_bytes(1024 * 512):
-                    f.write(chunk)
-                    got += len(chunk)
-                    if total:
-                        _set(pct=round(got / total * 100, 1))
+        with httpx.Client(timeout=DOWNLOAD_TIMEOUT) as client:
+            current_url = url
+            for _ in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+                if not current_url.startswith("https://"):
+                    raise UpdateError(
+                        "network_error",
+                        "The update download URL is not secure (https required).",
+                    )
+                with client.stream("GET", current_url) as r:
+                    if 300 <= r.status_code < 400 and "location" in r.headers:
+                        current_url = str(r.url.join(r.headers["location"]))
+                        continue
+                    r.raise_for_status()
+                    total = int(r.headers.get("content-length") or 0)
+                    got = 0
+                    with open(dest, "wb") as f:
+                        for chunk in r.iter_bytes(1024 * 512):
+                            f.write(chunk)
+                            got += len(chunk)
+                            if total:
+                                _set(pct=round(got / total * 100, 1))
+                    return
+            raise UpdateError("network_error", "Too many redirects while downloading the update.")
     except httpx.TransportError as e:
         raise UpdateError("network_error", "The update download was interrupted.") from e
     except httpx.HTTPStatusError as e:
@@ -257,12 +283,24 @@ def _hdiutil_attach(dmg_path: Path) -> str:
 
 
 def _locate_app(mount_point: str) -> Path:
-    candidate = Path(mount_point) / APP_BUNDLE_NAME
-    if candidate.is_dir():
+    """Only ever return a path that resolves to somewhere under the mounted
+    DMG — a symlink inside the volume (e.g. named "Academic OS.app" or
+    matching *.app) could otherwise point outside it before codesign/ditto
+    ever look at it."""
+    mount_root = Path(mount_point).resolve()
+
+    def _confined(path: Path) -> bool:
+        try:
+            return path.resolve().is_relative_to(mount_root)
+        except OSError:
+            return False
+
+    candidate = mount_root / APP_BUNDLE_NAME
+    if candidate.is_dir() and _confined(candidate):
         return candidate
-    found = list(Path(mount_point).glob("*.app"))
-    if found:
-        return found[0]
+    for found in mount_root.glob("*.app"):
+        if _confined(found):
+            return found
     raise UpdateError("install_error", "Couldn't find Academic OS.app in the update image.")
 
 
@@ -324,15 +362,29 @@ def _install(app_in_dmg: Path) -> None:
         # gets no Gatekeeper check at launch. Verify-what-you-run, not just
         # verify-what-you-copied.
         _codesign_verify(target)
-    except Exception:
-        # restore the previous app so the machine is never left without one
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        if moved_aside and backup.exists():
-            backup.rename(target)
-        if isinstance(sys.exc_info()[1], UpdateError):
+    except Exception as install_exc:
+        # Restore the previous app so the machine is never left without one —
+        # but the rollback itself (rmtree + rename) can fail too (cross-device
+        # rename, permissions, a backup partially removed by a race), so it
+        # gets its own guard. Without this, a rollback failure would escape
+        # this handler and, worse, get reported as "Nothing was changed" —
+        # which would be a lie: target may now not exist at all.
+        try:
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+            if moved_aside and backup.exists():
+                backup.rename(target)
+        except Exception as rollback_exc:
+            raise UpdateError(
+                "install_error",
+                "The update failed and restoring the previous version also failed "
+                f"({type(rollback_exc).__name__}: {rollback_exc}). "
+                f"The previous app may still be recoverable at {backup} — "
+                "restore it manually before relying on Academic OS again.",
+            ) from rollback_exc
+        if isinstance(install_exc, UpdateError):
             raise
-        raise UpdateError("install_error", "Couldn't install the update. Nothing was changed.")
+        raise UpdateError("install_error", "Couldn't install the update. Nothing was changed.") from install_exc
     else:
         if moved_aside and backup.exists():
             shutil.rmtree(backup, ignore_errors=True)

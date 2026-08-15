@@ -12,11 +12,20 @@ Each agent is a markdown file with YAML frontmatter:
   enabled: true
   description: ...
   timeout_seconds: 120
+  tools:                          # optional — the tools this agent may call
+    - web.search
+    - web.fetch
   ---
   The system prompt body...
 
 The body is sent to the LLM as the system prompt. The runner takes
 care of model selection, tool dispatch, and persistence.
+
+`tools` scopes which tools the runner hands to the model (see
+backend/services/tools.py build_tools(allowed=...)). Omitted or empty
+means the agent declared none — the runner falls back to a default-safe,
+read-only academic subset rather than the full tool registry. Declare
+exactly the tools the agent's prompt actually calls.
 """
 from __future__ import annotations
 
@@ -52,6 +61,12 @@ class AgentSpec:
     description: str = ""
     enabled: bool = True
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    # Declared tool scope (per-agent tool scoping contract). None means the
+    # agent declared no `tools:` frontmatter at all — the runner treats that
+    # as "no tools declared" and falls back to a default-safe subset rather
+    # than the full registry. An explicit list restricts the agent to exactly
+    # those registry names (see backend/services/tools.py build_tools).
+    tools: Optional[list[str]] = None
 
     def to_dict(self) -> dict:
         return {
@@ -64,6 +79,7 @@ class AgentSpec:
             "trigger_path": self.trigger_path,
             "enabled": self.enabled,
             "timeout_seconds": self.timeout_seconds,
+            "tools": self.tools,
             "path": str(self.path),
             "prompt_preview": self.prompt[:200] + ("..." if len(self.prompt) > 200 else ""),
         }
@@ -161,6 +177,24 @@ class AgentLoader:
                 f"agent {name!r}: invalid timeout_seconds {timeout_raw!r}: {e}"
             ) from e
 
+        # Declared tool scope. YAML frontmatter gives a native list; be
+        # defensive about a comma-separated string too (same spirit as the
+        # `enabled` coercion above). Blank entries are dropped. Absent key
+        # -> None ("declared none" -> runner applies the default-safe subset).
+        tools_raw = front.get("tools")
+        tools: Optional[list[str]]
+        if tools_raw is None:
+            tools = None
+        elif isinstance(tools_raw, list):
+            tools = [str(t).strip() for t in tools_raw if str(t).strip()]
+        elif isinstance(tools_raw, str):
+            tools = [t.strip() for t in tools_raw.split(",") if t.strip()]
+        else:
+            raise AgentLoaderError(
+                f"agent {name!r}: invalid tools {tools_raw!r} — "
+                f"expected a YAML list or comma-separated string"
+            )
+
         return AgentSpec(
             name=name,
             prompt=body.strip(),
@@ -177,4 +211,5 @@ class AgentLoader:
             description=str(front.get("description", "")),
             enabled=enabled,
             timeout_seconds=timeout_seconds,
+            tools=tools,
         )

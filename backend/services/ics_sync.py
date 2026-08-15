@@ -10,6 +10,12 @@ UID / DTEND) rather than an icalendar library — feeds only need those four.
 
 Config lives at data/connectors/ics.json:
     {"feeds": ["https://..."], "last_sync": iso, "last_result": {...}}
+
+Each feed URL embeds a per-student secret token (e.g. Canvas's
+`.../feeds/calendars/user_XXXX.ics`) — treat it as a credential. `config()`
+returns the raw list for internal use (adding feeds, syncing); anything
+that crosses to the client goes through `masked_config()` instead, which
+reduces each feed to `{id, host, configured}`.
 """
 from __future__ import annotations
 
@@ -20,6 +26,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -129,11 +136,31 @@ class IcsSyncService:
             self._save(cfg)
         return cfg
 
-    def remove_feed(self, url: str) -> dict:
+    def remove_feed_by_id(self, feed_id: int) -> dict:
+        """Unregister a feed by its position in the list (the `id` handed out
+        by `masked_config()`) — the caller never has to round-trip the full
+        URL, which carries a per-student secret token."""
         cfg = self.config()
-        cfg["feeds"] = [f for f in cfg["feeds"] if f != url]
-        self._save(cfg)
+        if 0 <= feed_id < len(cfg["feeds"]):
+            del cfg["feeds"][feed_id]
+            self._save(cfg)
         return cfg
+
+    def masked_config(self) -> dict:
+        """Config safe to return to the UI. Canvas/Moodle/Brightspace feed
+        URLs embed a per-student secret token in the path — never send the
+        full URL to the client, only its host and a stable-for-this-list id
+        (`config()` / `sync()` keep using the raw URL internally)."""
+        cfg = self.config()
+        feeds = []
+        for i, url in enumerate(cfg["feeds"]):
+            try:
+                host = urlparse(url).hostname or ""
+            except ValueError:
+                host = ""
+            feeds.append({"id": i, "host": host, "configured": True})
+        return {"feeds": feeds, "last_sync": cfg.get("last_sync"),
+                "last_result": cfg.get("last_result")}
 
     # sync ---------------------------------------------------------
     async def sync(self, courses_service) -> dict:

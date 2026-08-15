@@ -62,10 +62,14 @@ _READ_PREFIX_RE = re.compile(
 )
 
 _INTERNAL_SET: frozenset[str] = frozenset({
-    "inbox.add", "inbox.mark_done", "vault.write",
+    "inbox.add", "inbox.mark_done",
     # Memory compaction rewrites distilled notes but archives (never deletes)
     # every removed item, so it is internal-reversible and safe to auto-run.
     "memory.compact",
+    # vault.write is NOT here: writes to the vault (agent memory, notes,
+    # schedules) require explicit human approval — gated via cautious
+    # posture's default "unknown tool" fallthrough. See CLAUDE.md pinned
+    # contract: vault.write must go to Approvals, not auto-run.
 })
 
 # Matched anywhere in lowercased tool name

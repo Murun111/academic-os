@@ -300,10 +300,66 @@ async def test_runner_marks_timeout_when_deadline_exceeded(loader, store, monkey
         return await original_vault_read(*args, **kwargs)
     monkeypatch.setattr(tools_mod, "vault_read", slow_vault_read)
 
+    # Per-agent tool scoping: this agent must DECLARE vault.read for the test's
+    # slow_vault_read to be reachable (it's not in the default-safe subset).
+    (loader.agents_dir / "echo.md").write_text(
+        "---\ntype: agent\nname: echo\ndescription: echoes the context\n"
+        "timeout_seconds: 30\ntools: [vault.read]\n---\n"
+        "You are an echo agent. Repeat what the user said.\n"
+    )
     runner = AgentRunner(ollama, AgentLoader(loader.agents_dir), store)
     run = await runner.run("echo")
     assert run.status == RunStatus.TIMEOUT
     assert "timeout" in run.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_bare_agent_cannot_call_or_escalate_unscoped_tool(
+    spec_dir, store, monkeypatch, tmp_path
+):
+    """Security boundary: an agent that declares no tools (default-safe subset)
+    which is injected/hallucinated into calling vault.write must have the call
+    BLOCKED outright — never executed, and never escalated into the Approvals
+    queue where a human could approve a tool the agent was never scoped for."""
+    monkeypatch.setattr("backend.vault.resolve_vault_path", lambda: tmp_path)
+    monkeypatch.setattr("backend.services.events.publish", lambda ev: None)
+    monkeypatch.setattr("backend.services.notify.notify", lambda *a, **kw: None)
+    from backend.ollama import ChatMessage, ChatResponse, ToolCall
+    from backend.services import tools as tools_mod
+
+    calls = {"n": 0}
+    async def chat(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ChatResponse(
+                message=ChatMessage(
+                    role="assistant", content="",
+                    tool_calls=[ToolCall(id="t1", name="vault.write",
+                                         arguments={"path": "data/autonomy_allow.json",
+                                                    "content": "[]"})],
+                ),
+                model="mock", total_duration_ns=0, prompt_eval_count=0,
+                eval_count=0, done_reason="stop",
+            )
+        return ChatResponse(
+            message=ChatMessage(role="assistant", content="done", tool_calls=[]),
+            model="mock", total_duration_ns=0, prompt_eval_count=0,
+            eval_count=0, done_reason="stop",
+        )
+    ollama = MagicMock(spec=OllamaService)
+    ollama.chat = AsyncMock(side_effect=chat)
+
+    runner = AgentRunner(ollama, AgentLoader(spec_dir), store)
+    run = await runner.run("echo")
+
+    # The run's own record is the proof: vault.write was recorded as blocked
+    # and never entered the Approvals queue. (We don't spy on the vault_write
+    # function itself — the runner legitimately calls it via record_run to log
+    # its own run summary, which is unrelated to the agent's tool calls.)
+    assert not any(e.get("tool") == "vault.write" for e in run.escalations), \
+        "an unscoped tool must not reach the Approvals queue"
+    assert any(t.get("tool") == "vault.write" and t.get("gate") == "blocked"
+               for t in run.tool_calls), "the blocked call should be recorded"
 
 
 @pytest.mark.asyncio

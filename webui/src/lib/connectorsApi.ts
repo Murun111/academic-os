@@ -8,8 +8,16 @@ export interface IcsSyncResult {
   errors: { feed: string; error: string }[]
 }
 
+// Feed URLs carry a per-student secret token — the backend never sends the
+// full URL to the client, only an id (stable for this list) and the host.
+export interface IcsFeed {
+  id: number
+  host: string
+  configured: boolean
+}
+
 export interface IcsConfig {
-  feeds: string[]
+  feeds: IcsFeed[]
   last_sync: string | null
   last_result: IcsSyncResult | null
 }
@@ -60,12 +68,12 @@ export const connectorsApi = {
     }
   },
 
-  removeFeed: async (url: string): Promise<boolean> => {
+  removeFeed: async (id: number): Promise<boolean> => {
     try {
       const res = await fetch(`${BASE}/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ id }),
       })
       return res.ok
     } catch {
