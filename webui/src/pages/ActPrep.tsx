@@ -21,11 +21,11 @@ export function ActPrep() {
     <div className="mx-auto flex h-full max-w-[1100px] flex-col">
       <div className="mb-4">
         <p className="label-mono mb-1">just for you</p>
-        <h1 className="text-[24px] font-semibold tracking-[-0.01em]">ACT Blitz</h1>
+        <h1 className="text-[24px] font-semibold tracking-[-0.01em]">ACT Quest</h1>
       </div>
       <iframe
-        title="ACT Blitz — Beat the Clock"
-        src="/act-blitz/index.html"
+        title="ACT Quest"
+        src="/act-quest/index.html"
         className="min-h-0 w-full flex-1 rounded-[14px] border border-line bg-raise"
       />
     </div>

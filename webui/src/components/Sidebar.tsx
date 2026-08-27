@@ -43,7 +43,7 @@ export function Sidebar() {
   // unlock string (see ActPrep.tsx). Hidden for every other copy.
   const userName = useOs((s) => s.userName)
   if (userName === ACT_GAME_UNLOCK_NAME) {
-    nav.push({ to: '/act-prep', label: 'ACT Blitz', icon: Timer })
+    nav.push({ to: '/act-prep', label: 'ACT Quest', icon: Timer })
   }
   // stage-aware label (Colleges/Programs), further tailored by track (Med Schools)
   const track = useOs((s) => s.track)
