@@ -15,6 +15,14 @@ export interface WhatsNewEntry {
 // not the technical changelog. Keep entries short; only versions with a
 // user-visible change need one.
 export const CHANGELOG: Record<string, WhatsNewEntry> = {
+  '0.5.0': {
+    title: "What's new",
+    items: [
+      'The assistant now knows your schedule. Ask it what is due or what to focus on this week, and it answers from your real deadlines, courses, and tasks instead of guessing.',
+      'A short "what\'s new" note like this one appears after each update, so you can see what changed.',
+      'Sharper answers from the built-in AI, and faster streaming replies in Chat.',
+    ],
+  },
   '0.4.1': {
     title: "What's new",
     items: [
