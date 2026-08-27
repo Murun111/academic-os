@@ -74,8 +74,12 @@ async def test_student_profile_reads_stage_track(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_upcoming_deadlines_merges_and_caps():
+    # Relative near-future date so the test can't go stale — the deadline
+    # filter drops anything before today, and a hardcoded date silently rots.
+    import datetime as _dt
+    soon = (_dt.date.today() + _dt.timedelta(days=10)).isoformat()
     academics_tools._apps().add(name="Soon Grant", type="scholarship",
-                                deadline="2026-08-20")
+                                deadline=soon)
     result = await academics_tools.upcoming_deadlines(days=500)  # capped to 90
     titles = [i["title"] for i in result["items"]]
     assert "Soon Grant" in titles

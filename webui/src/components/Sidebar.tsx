@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutGrid, MessageSquare, Bot, ShieldCheck, Settings,
-  Command, GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles,
+  Command, GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles, Timer,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { stageConfig, STAGES } from '../lib/stageConfig'
 import { trackApplies, trackConfig } from '../lib/trackConfig'
+import { ACT_GAME_UNLOCK_NAME } from '../pages/ActPrep'
 import { Kbd, StatusDot } from './ui'
 
 const NAV = [
@@ -38,6 +39,12 @@ export function Sidebar() {
     const ib = order.indexOf(b.to)
     return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib)
   })
+  // Private ACT Blitz game — only appears when the profile name is the secret
+  // unlock string (see ActPrep.tsx). Hidden for every other copy.
+  const userName = useOs((s) => s.userName)
+  if (userName === ACT_GAME_UNLOCK_NAME) {
+    nav.push({ to: '/act-prep', label: 'ACT Blitz', icon: Timer })
+  }
   // stage-aware label (Colleges/Programs), further tailored by track (Med Schools)
   const track = useOs((s) => s.track)
   const trackCfg = trackApplies(stage) ? trackConfig(track) : null

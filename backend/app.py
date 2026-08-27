@@ -345,6 +345,38 @@ async def llms_models(backend: str):
     }
 
 
+def _chat_system_context(user_text: str) -> list["ChatMessage"]:
+    """System messages prepended to every chat turn, in order: house style
+    (how to write), the student's live data (what's true about them), then any
+    recalled memory. All best-effort — a broken source is skipped, never fatal.
+    Used by BOTH the streaming and non-streaming chat handlers so the Chat tab
+    (which streams) gets the same grounding + style as the fallback path.
+    """
+    from backend.llm_hub import HOUSE_STYLE
+    out = [ChatMessage(role="system", content=HOUSE_STYLE)]
+    # #3 grounding: the student's current deadlines / courses / tasks, so the
+    # model answers about THEM instead of guessing. Toggle: STUDENT_CONTEXT=0.
+    if os.environ.get("STUDENT_CONTEXT", "1") != "0":
+        try:
+            from backend.services.student_context import build_context
+            sc = build_context()
+            if sc:
+                out.append(ChatMessage(role="system", content=sc))
+        except Exception as _ctx_err:
+            print(f"[context] student context failed: {_ctx_err}")
+    # Relevant memory notes (local-first, best-effort). Affects only what the
+    # model sees this turn; does NOT change what save_thread persists.
+    if user_text and os.environ.get("MEMORY_RECALL", "1") != "0":
+        try:
+            from backend.services.memory_recall import recall as _recall
+            _ctx = _recall(user_text)
+            if _ctx:
+                out.append(ChatMessage(role="system", content=_ctx))
+        except Exception as _recall_err:
+            print(f"[memory] recall failed: {_recall_err}")
+    return out
+
+
 @app.post("/api/llms/chat")
 async def llms_chat(body: dict) -> JSONResponse:
     """Route a chat call to the chosen backend.
@@ -371,22 +403,9 @@ async def llms_chat(body: dict) -> JSONResponse:
         None,
     )
     user_text = last_user["content"] if last_user else ""
-    msgs = [ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs]
-    # House style first, so recall context inserted below reads as context
-    # rather than as the instruction of record. Applies to every backend —
-    # the Chat bubble renders plain text, so markdown and emoji show up raw.
-    from backend.llm_hub import HOUSE_STYLE
-    msgs.insert(0, ChatMessage(role="system", content=HOUSE_STYLE))
-    # Phase 1.4: inject relevant memory as a system message (local-first, best-effort).
-    # Affects only what the model sees this turn; does NOT change what save_thread persists.
-    if user_text and os.environ.get("MEMORY_RECALL", "1") != "0":
-        try:
-            from backend.services.memory_recall import recall as _recall
-            _ctx = _recall(user_text)
-            if _ctx:
-                msgs.insert(0, ChatMessage(role="system", content=_ctx))
-        except Exception as _recall_err:
-            print(f"[memory] recall failed: {_recall_err}")
+    msgs = _chat_system_context(user_text) + [
+        ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs
+    ]
     try:
         result: ChatResult = await b.chat(msgs, model=model)
     except Exception as e:
@@ -454,7 +473,11 @@ async def llms_chat_stream(body: dict):
     user_text = last_user["content"] if last_user else ""
 
     llm_backend = get_backend(backend_name)
-    llm_msgs = [ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs]
+    # Same house-style + grounding + recall the non-streaming path gets — the
+    # Chat tab streams, so without this the streamed answers would be ungrounded.
+    llm_msgs = _chat_system_context(user_text) + [
+        ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs
+    ]
     t0 = time.time()
 
     def _persist(full: str) -> str | None:

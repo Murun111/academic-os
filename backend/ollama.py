@@ -163,12 +163,17 @@ class OllamaService:
         tools: Optional[list[dict[str, Any]]] = None,
         think: bool = False,
         model: Optional[str] = None,
+        json_mode: bool = False,
     ) -> ChatResponse:
         """One non-streaming chat turn. Returns the assistant message + telemetry.
 
         tools: list of {"type": "function", "function": {"name", "description", "parameters"}}
         think: enable extended thinking (Ollama returns a "thinking" field)
         model: override the service default for this call (per-agent routing).
+        json_mode: constrain output to a JSON object — Ollama's `format:"json"`
+          and llama-server's `response_format:{type:"json_object"}`. Small local
+          models are far more reliable at structured extraction with this on.
+          The caller still parses defensively; the model can emit malformed JSON.
         """
         client = await self._get_client()
         use_model = model or self.model
@@ -182,13 +187,15 @@ class OllamaService:
             payload["tools"] = tools
         if think:
             payload["think"] = True
+        if json_mode:
+            payload["format"] = "json"
         try:
             r = await client.post("/api/chat", json=payload)
             r.raise_for_status()
             data = r.json()
         except (httpx.ConnectError, httpx.ConnectTimeout):
             # Ollama not installed/running → bundled llama-server fallback.
-            data = await self._local_fallback_chat(messages, tools)
+            data = await self._local_fallback_chat(messages, tools, json_mode)
         except httpx.ReadTimeout:
             # Ollama is up and accepted the request but took too long to
             # respond. Do NOT silently switch models mid-request — that
@@ -207,7 +214,8 @@ class OllamaService:
         )
 
     async def _local_fallback_chat(
-        self, messages: list[ChatMessage], tools: Optional[list[dict[str, Any]]]
+        self, messages: list[ChatMessage], tools: Optional[list[dict[str, Any]]],
+        json_mode: bool = False,
     ) -> dict[str, Any]:
         """Chat via the bundled llama.cpp server (OpenAI format), translated
         back to the Ollama response shape. Raises the original-style
@@ -224,6 +232,8 @@ class OllamaService:
         }
         if tools:
             payload["tools"] = tools  # already OpenAI-shaped
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as c:
             r = await c.post(f"{local_llm.BASE_URL}/v1/chat/completions", json=payload)
             r.raise_for_status()

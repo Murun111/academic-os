@@ -135,7 +135,11 @@ HOUSE_STYLE = (
     "If you must enumerate, write '1.' at the start of a line and keep each "
     "item to one sentence.\n"
     "Keep answers under 120 words. If you do not know something, say so "
-    "plainly in one sentence rather than guessing."
+    "plainly in one sentence rather than guessing.\n"
+    "When the student asks about their own deadlines, courses, grades, or "
+    "tasks, answer only from the data provided to you in context. Do not "
+    "invent assignments, dates, or classes; if the answer is not in that "
+    "data, say you do not have it and suggest where they can add it."
 )
 
 

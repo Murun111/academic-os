@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar'
 import { CommandPalette } from './components/CommandPalette'
 import { StageSetup } from './components/StageSetup'
 import { Tour } from './components/Tour'
+import { WhatsNew } from './components/WhatsNew'
 import { Toasts } from './components/Toasts'
 import { DataFormatBanner } from './components/DataFormatBanner'
 import { BackendDownBanner } from './components/BackendDownBanner'
@@ -22,6 +23,7 @@ import { Approvals } from './pages/Approvals'
 import { Settings } from './pages/Settings'
 import { Calendar } from './pages/Calendar'
 import { Export } from './pages/Export'
+import { ActPrep } from './pages/ActPrep'
 
 const TITLES: Record<string, string> = {
   '/': 'Dashboard', '/applications': 'Applications', '/courses': 'Courses', '/study': 'Study',
@@ -54,6 +56,7 @@ function Shell() {
       <Route path="/approvals" element={<Approvals />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/export" element={<Export />} />
+      <Route path="/act-prep" element={<ActPrep />} />
     </Routes>
   )
 
@@ -64,6 +67,7 @@ function Shell() {
         <Sidebar />
         <CommandPalette />
         <Tour />
+        <WhatsNew />
         <Toasts />
         <main className="fixed top-0 right-0 bottom-0 left-[92px] overflow-hidden lg:left-[254px]">
           <div className="h-full overflow-y-auto px-7 py-6">{routes}</div>
@@ -79,6 +83,7 @@ function Shell() {
       <CommandPalette />
       <StageSetup />
       <Tour />
+      <WhatsNew />
       <Toasts />
       <main className="fixed top-0 right-0 bottom-0 left-[92px] overflow-hidden lg:left-[254px]">
         <AnimatePresence mode="wait">
