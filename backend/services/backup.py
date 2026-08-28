@@ -152,7 +152,10 @@ def _mirrored_files(base: Path) -> dict[str, Path]:
         if not sub_dir.exists():
             continue
         for p in sub_dir.rglob("*"):
-            if not p.is_file():
+            # Skip symlinks: is_file()/copy2 would dereference them and pull the
+            # content of an external target (e.g. ~/.ssh/id_rsa) into the data
+            # root on restore. Only real files inside the mirror are mirrored.
+            if p.is_symlink() or not p.is_file():
                 continue
             rel = p.relative_to(base)
             if sub == "data" and rel.parts[1:2] == ("connectors",):

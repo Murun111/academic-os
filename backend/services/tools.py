@@ -218,6 +218,13 @@ async def vault_write(path: str, content: str) -> dict:
     if _is_within(full, data_dir):
         return {"error": "forbidden", "path": path,
                 "detail": "the data/ directory is not writable by agents"}
+    # Disallow agents/ — AgentLoader reads specs here and the scheduler
+    # cron-runs them. A generic file write must never mint or rewrite an agent
+    # spec (its tools:, prompt, schedule); that path is _ALWAYS_GATED only.
+    agents_dir = _realpath(vault_root / "agents")
+    if _is_within(full, agents_dir):
+        return {"error": "forbidden", "path": path,
+                "detail": "the agents/ directory is not writable by agents"}
     # Disallow user-authored folders (per CLAUDE.md)
     for blocked in ("aa) Murun", "Ascent Studios Co", "Parvis Ai", "Improvability"):
         if blocked in path:

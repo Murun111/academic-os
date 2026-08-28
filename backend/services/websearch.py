@@ -60,37 +60,82 @@ def _blocked_destination(ip_text: str) -> bool:
     )
 
 
-def _ssrf_guard(url: str) -> dict | None:
-    """Egress SSRF guard for a caller-supplied URL.
+def _ssrf_guard_resolve(url: str) -> tuple[dict | None, str | None]:
+    """Egress SSRF guard that also returns a validated IP to pin to.
 
-    Returns a friendly error dict if `url` must not be fetched (bad scheme,
-    unresolvable host, or resolves to a loopback/private/link-local/reserved
-    address). Returns None when the URL is safe to fetch. Never raises —
-    a DNS failure or malformed URL is treated as "blocked", not an exception.
+    Returns (error_dict, None) if `url` must not be fetched (bad scheme,
+    unresolvable host, or ANY resolved address is loopback/private/link-local/
+    reserved). Returns (None, ip) with the first validated address when safe.
+    Never raises — a DNS failure or malformed URL is treated as "blocked".
+
+    The returned IP lets the caller connect to that exact address (see
+    `_pinned_get`) instead of letting the HTTP client re-resolve the host, which
+    closes the DNS-rebinding TOCTOU: a low-TTL host can't answer "public" here
+    and "127.0.0.1" to a second, independent lookup at connect time.
     """
     try:
         parsed = urlparse(url)
     except ValueError:
-        return {"error": "blocked_url", "url": url, "detail": "malformed URL"}
+        return {"error": "blocked_url", "url": url, "detail": "malformed URL"}, None
     if parsed.scheme not in ("http", "https"):
         return {"error": "blocked_url", "url": url,
-                "detail": f"scheme {parsed.scheme!r} is not allowed"}
+                "detail": f"scheme {parsed.scheme!r} is not allowed"}, None
     host = parsed.hostname
     if not host:
-        return {"error": "blocked_url", "url": url, "detail": "no hostname in URL"}
+        return {"error": "blocked_url", "url": url, "detail": "no hostname in URL"}, None
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
-        return {"error": "blocked_url", "url": url, "detail": "could not resolve host"}
+        return {"error": "blocked_url", "url": url, "detail": "could not resolve host"}, None
+    first_ip: str | None = None
     for info in infos:
         ip_text = info[4][0]
         try:
             if _blocked_destination(ip_text):
                 return {"error": "blocked_url", "url": url,
-                        "detail": f"{host!r} resolves to a private/internal address"}
+                        "detail": f"{host!r} resolves to a private/internal address"}, None
         except ValueError:
-            return {"error": "blocked_url", "url": url, "detail": "unresolvable address"}
-    return None
+            return {"error": "blocked_url", "url": url, "detail": "unresolvable address"}, None
+        if first_ip is None:
+            first_ip = ip_text.split("%", 1)[0]  # strip IPv6 zone id
+    return None, first_ip
+
+
+def _ssrf_guard(url: str) -> dict | None:
+    """Back-compat wrapper: the error half of `_ssrf_guard_resolve`."""
+    return _ssrf_guard_resolve(url)[0]
+
+
+async def _pinned_get(url: str, *, timeout: float = 20) -> tuple[httpx.Response | None, str, dict | None]:
+    """SSRF-guarded GET pinned to the validated IP, with manual redirects.
+
+    Each hop is resolved+validated, then the request goes to that literal IP
+    with the Host header and TLS SNI preserved — so the address the guard
+    approved is the address actually connected to (no independent re-resolve).
+    Redirects are followed manually (max 5) and re-guarded per hop. Returns
+    (response, final_logical_url, None) or (None, url, error_dict).
+    """
+    logical = url  # URL carrying the real hostname (redirects resolve against this)
+    async with httpx.AsyncClient(timeout=timeout, headers=_UA, follow_redirects=False) as c:
+        for _ in range(6):
+            err, ip = _ssrf_guard_resolve(logical)
+            if err is not None:
+                return None, logical, err
+            p = urlparse(logical)
+            netloc_ip = f"[{ip}]" if ip and ":" in ip else ip
+            if p.port:
+                netloc_ip = f"{netloc_ip}:{p.port}"
+            pinned_url = p._replace(netloc=netloc_ip).geturl()
+            r = await c.get(
+                pinned_url,
+                headers={"Host": p.netloc},
+                extensions={"sni_hostname": p.hostname},
+            )
+            if r.is_redirect and "location" in r.headers:
+                logical = str(httpx.URL(logical).join(r.headers["location"]))
+                continue
+            return r, logical, None
+    return None, logical, {"error": "blocked_url", "url": url, "detail": "too many redirects"}
 
 
 def _real_url(href: str) -> str:
@@ -124,25 +169,16 @@ async def fetch(url: str) -> dict:
     Returns an offline error dict on a connectivity failure, or a
     `{"error": "blocked_url", ...}` dict if the URL (or its final,
     post-redirect destination) is loopback/private/link-local/reserved."""
-    guard_error = _ssrf_guard(url)
-    if guard_error is not None:
-        return guard_error
+    # IP-pinned, per-hop-guarded GET — closes the DNS-rebinding TOCTOU that a
+    # guard-then-let-httpx-re-resolve flow leaves open (see _pinned_get).
     try:
-        async with httpx.AsyncClient(timeout=20, headers=_UA, follow_redirects=True) as c:
-            r = await c.get(url)
-            r.raise_for_status()
-            body = r.text
-            final_url = str(r.url)
+        r, final_url, guard_error = await _pinned_get(url, timeout=20)
+        if guard_error is not None:
+            return guard_error
+        r.raise_for_status()
+        body = r.text
     except _CONNECTION_ERRORS:
         return dict(_OFFLINE_RESULT)
-    # Re-check the post-redirect destination: httpx already followed the
-    # redirect chain by this point, so this can't stop the request, but it
-    # stops a redirect-to-private-address response body from being handed
-    # back to the caller.
-    if final_url != url:
-        final_guard_error = _ssrf_guard(final_url)
-        if final_guard_error is not None:
-            return final_guard_error
     body = _BLOCK_RE.sub(" ", body)
     # keep some block structure as newlines before stripping tags
     body = re.sub(r"</(p|div|li|h[1-6]|tr|br)>", "\n", body, flags=re.I)

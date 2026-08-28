@@ -71,7 +71,7 @@ class _OfflineClient:
     def __init__(self, *a, **kw): pass
     async def __aenter__(self): return self
     async def __aexit__(self, *a): return False
-    async def get(self, url, params=None): raise httpx.ConnectError("no internet")
+    async def get(self, url, *a, **kw): raise httpx.ConnectError("no internet")
 
 
 @pytest.mark.asyncio

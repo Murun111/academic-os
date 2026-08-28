@@ -22,6 +22,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.ollama import OllamaService
 from backend.services.agent_loader import AgentLoader
@@ -252,6 +253,19 @@ async def block_writes_on_newer_data_format(request, call_next):
             status_code=409,
         )
     return await call_next(request)
+
+
+# Reject any request whose Host header is not a loopback name. The Origin
+# check above stops cross-origin *writes*, but a DNS-rebinding attacker keeps
+# a non-loopback Host while their still-loaded page becomes "same-origin" with
+# 127.0.0.1:7878 — letting them read every GET route (profile, essays, apps).
+# TrustedHostMiddleware strips the port before matching, so ports need no
+# entry. "testserver" is Starlette's TestClient default Host. Added last so it
+# runs first (outermost) — bad hosts are rejected before any route logic.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["localhost", "127.0.0.1", "testserver"],
+)
 
 
 # === Academic OS module routers ===================================
@@ -1489,10 +1503,13 @@ if FRONTEND_BUILD.exists():
     async def serve_spa(path: str) -> FileResponse:
         # Serve any matching file in the webui build (assets). The app uses
         # HashRouter, so unknown paths fall back to index.html.
-        file_path = FRONTEND_BUILD / path
-        if file_path.is_file():
-            return FileResponse(file_path)
-        return FileResponse(FRONTEND_BUILD / "index.html")
+        # Resolve + containment-check so a percent-encoded ../ can't escape the
+        # build dir and read arbitrary files (e.g. /%2e%2e/%2e%2e/etc/passwd).
+        base = FRONTEND_BUILD.resolve()
+        target = (base / path).resolve()
+        if (target == base or base in target.parents) and target.is_file():
+            return FileResponse(target)
+        return FileResponse(base / "index.html")
 else:
     @app.get("/")
     async def serve_index() -> JSONResponse:

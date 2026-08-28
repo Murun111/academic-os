@@ -405,7 +405,7 @@ export function ApplicationDrawer({
         />
       </div>
 
-      {item.url && (
+      {item.url && /^https?:\/\//i.test(item.url) && (
         <a href={item.url} target="_blank" rel="noreferrer" className="mb-4 block font-mono text-[11px] text-low hover:text-mid">
           {item.url}
         </a>

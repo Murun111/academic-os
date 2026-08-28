@@ -60,6 +60,7 @@ def test_split_course():
 # ── sync upsert ───────────────────────────────────────────────────
 
 class FakeResponse:
+    is_redirect = False  # sync() now follows redirects manually via _guarded_ics_get
     def __init__(self, text): self.text = text
     def raise_for_status(self): pass
 
@@ -68,12 +69,20 @@ class FakeClient:
     def __init__(self, *a, **kw): pass
     async def __aenter__(self): return self
     async def __aexit__(self, *a): return False
-    async def get(self, url): return FakeResponse(SAMPLE_ICS)
+    async def get(self, url, *a, **kw): return FakeResponse(SAMPLE_ICS)
+
+
+def _resolve_public(host, *a, **k):
+    """Make any feed host resolve to a public IP so the ICS SSRF guard passes
+    (real .example hosts are unresolvable). Keeps tests off real DNS."""
+    import socket as _s
+    return [(_s.AF_INET, _s.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
 
 @pytest.fixture
 def services(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.services.ics_sync.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("backend.services.websearch.socket.getaddrinfo", _resolve_public)
     ics = IcsSyncService(data_dir=tmp_path / "connectors")
     courses = CoursesService(data_dir=tmp_path / "courses")
     ics.add_feed("https://school.example/feeds/user_abc.ics")
@@ -125,6 +134,7 @@ async def test_sync_bad_feed_reports_error_not_raise(tmp_path, monkeypatch):
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
     monkeypatch.setattr("backend.services.ics_sync.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("backend.services.websearch.socket.getaddrinfo", _resolve_public)
     reset_services()
     app = FastAPI()
     app.include_router(router)

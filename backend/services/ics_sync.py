@@ -31,6 +31,35 @@ from urllib.parse import urlparse
 import httpx
 
 
+class _FeedBlocked(Exception):
+    """A feed URL (or a redirect hop) resolved to a blocked destination."""
+
+
+async def _guarded_ics_get(url: str) -> httpx.Response:
+    """GET an ICS feed with SSRF protection.
+
+    Guards the initial URL and every redirect hop against
+    loopback/private/link-local addresses — a feed host can 30x-redirect into
+    127.0.0.1 or a LAN service otherwise. Redirects are followed manually (not
+    via httpx follow_redirects) so each hop is re-guarded before the request.
+    """
+    from backend.services.websearch import _ssrf_guard  # local: avoid import cycle
+
+    current = url
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+        for _ in range(6):  # cap the redirect chain
+            blocked = _ssrf_guard(current)
+            if blocked is not None:
+                raise _FeedBlocked(blocked.get("detail", "blocked destination"))
+            r = await client.get(current)
+            if r.is_redirect and r.next_request is not None:
+                current = str(r.next_request.url)
+                continue
+            r.raise_for_status()
+            return r
+    raise _FeedBlocked("too many redirects")
+
+
 # ── minimal ICS parsing ──────────────────────────────────────────
 
 @dataclass
@@ -170,14 +199,20 @@ class IcsSyncService:
         result = {"feeds": len(cfg["feeds"]), "created": 0, "updated": 0,
                   "unchanged": 0, "errors": []}
 
-        for url in cfg["feeds"]:
+        for i, url in enumerate(cfg["feeds"]):
+            # Error records are surfaced via masked_config() → the client, so
+            # they carry only the masked id/host, never the raw URL (which
+            # embeds the per-student secret token).
             try:
-                async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-                    r = await client.get(url)
-                    r.raise_for_status()
+                host = urlparse(url).hostname or ""
+            except ValueError:
+                host = ""
+            try:
+                r = await _guarded_ics_get(url)
                 events = parse_ics(r.text)
             except Exception as e:
-                result["errors"].append({"feed": url[:80], "error": f"{type(e).__name__}: {e}"})
+                result["errors"].append(
+                    {"feed_id": i, "host": host, "error": f"{type(e).__name__}: {e}"})
                 continue
 
             courses = {c.name: c for c in courses_service.list_courses()}

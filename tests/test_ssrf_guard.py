@@ -144,7 +144,10 @@ async def test_public_host_passes_guard(monkeypatch):
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "example.com"
+        # fetch() pins the connection to the guard-validated IP (anti-DNS-rebind)
+        # while preserving the real hostname in the Host header and TLS SNI.
+        assert request.url.host == "93.184.216.34"
+        assert request.headers.get("host") == "example.com"
         return httpx.Response(200, text="<html><body><p>hello public web</p></body></html>")
 
     _mock_transport_client(monkeypatch, handler)
