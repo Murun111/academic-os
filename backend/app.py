@@ -274,6 +274,7 @@ from backend.routers.courses import router as courses_router  # noqa: E402
 from backend.routers.study import router as study_router  # noqa: E402
 from backend.routers.documents import router as documents_router  # noqa: E402
 from backend.routers.routines import router as routines_router  # noqa: E402
+from backend.routers.learning import router as learning_router  # noqa: E402
 from backend.routers.profile import router as profile_router  # noqa: E402
 from backend.routers.connectors import router as connectors_router  # noqa: E402
 from backend.routers.localai import router as localai_router  # noqa: E402
@@ -288,6 +289,7 @@ app.include_router(update_router)
 app.include_router(applications_router)
 app.include_router(courses_router)
 app.include_router(study_router)
+app.include_router(learning_router)
 app.include_router(documents_router)
 app.include_router(routines_router)
 

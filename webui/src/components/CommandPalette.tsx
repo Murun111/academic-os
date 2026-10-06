@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutGrid, MessageSquare, Bot, ShieldCheck, Settings as SettingsIcon,
-  GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles, Play, Check, X as XIcon,
+  GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles, Brain, Play, Check, X as XIcon,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { Kbd } from './ui'
@@ -83,6 +83,7 @@ export function CommandPalette() {
       { id: 'g-apps', group: 'Go to', label: 'Applications', icon: GraduationCap, action: () => navigate('/applications') },
       { id: 'g-courses', group: 'Go to', label: 'Courses', icon: BookOpen, action: () => navigate('/courses') },
       { id: 'g-study', group: 'Go to', label: 'Study', icon: CalendarCheck, action: () => navigate('/study') },
+      { id: 'g-learning', group: 'Go to', label: 'Learning', icon: Brain, action: () => navigate('/learning') },
       { id: 'g-cal', group: 'Go to', label: 'Calendar', icon: CalendarDays, action: () => navigate('/calendar') },
       { id: 'g-docs', group: 'Go to', label: 'Documents', icon: Files, action: () => navigate('/documents') },
       { id: 'g-routines', group: 'Go to', label: 'Routines', icon: Sparkles, action: () => navigate('/routines') },

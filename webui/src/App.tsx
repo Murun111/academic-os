@@ -16,6 +16,7 @@ import { Chat } from './pages/Chat'
 import { Applications } from './pages/Applications'
 import { Courses } from './pages/Courses'
 import { Study } from './pages/Study'
+import { Learning } from './pages/Learning'
 import { Documents } from './pages/Documents'
 import { Routines } from './pages/Routines'
 import { Agents } from './pages/Agents'
@@ -26,7 +27,7 @@ import { Export } from './pages/Export'
 import { ActPrep } from './pages/ActPrep'
 
 const TITLES: Record<string, string> = {
-  '/': 'Dashboard', '/applications': 'Applications', '/courses': 'Courses', '/study': 'Study',
+  '/': 'Dashboard', '/applications': 'Applications', '/courses': 'Courses', '/study': 'Study', '/learning': 'Learning',
   '/calendar': 'Calendar', '/documents': 'Documents', '/routines': 'Routines', '/chat': 'Chat',
   '/agents': 'Assistants', '/approvals': 'Approvals', '/settings': 'Settings',
   '/export': 'Progress Report',
@@ -48,6 +49,7 @@ function Shell() {
       <Route path="/applications" element={<Applications />} />
       <Route path="/courses" element={<Courses />} />
       <Route path="/study" element={<Study />} />
+      <Route path="/learning" element={<Learning />} />
       <Route path="/calendar" element={<Calendar />} />
       <Route path="/documents" element={<Documents />} />
       <Route path="/routines" element={<Routines />} />

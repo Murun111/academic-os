@@ -30,6 +30,10 @@ Commands:
 
 **Ollama optional:** LLM endpoints degrade to 503 if Ollama unreachable. Webui pages handle gracefully.
 
+**Learning AI (`/api/learning/generate/*`, `/tutor`):** 503 when no llm_hub backend is online or the call fails, 502 when the model's output is unparseable. Never return template/fabricated content as a fallback (the original Gemini-written version did). All LLM output goes through `_normalize_*` in `learning_ai.py` — local models omit fields (qwen2.5:7b drops `key_takeaways`/`formulas`, which crashed the UI) and questions whose answer isn't among the options are dropped as ungradeable.
+
+**Browser-testing a second backend:** the CSRF/WS origin allowlist is hardcoded to 7878/5173, so a dev backend on another port 403s every POST from the browser. Put a pass-through proxy on 5173 rather than widening the allowlist.
+
 **Tailwind 4:** No `tailwind.config.js`. All tokens live in `webui/src/index.css` under `@theme { }` block.
 
 **Theming:** light + dark via `:root[data-theme='dark']` var overrides in index.css. Never write `bg-black/N` etc. in components — use `ink/N` (`--color-ink`: black in light, white in dark). Literal `black/` is reserved for modal scrims and the tour overlay only. Toggle lives in Settings; persisted in localStorage `academicos.theme`.

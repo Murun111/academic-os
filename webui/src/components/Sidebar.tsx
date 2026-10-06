@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutGrid, MessageSquare, Bot, ShieldCheck, Settings,
-  Command, GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles, Timer,
+  Command, GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles, Timer, Brain,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
 import { stageConfig, STAGES } from '../lib/stageConfig'
@@ -14,6 +14,7 @@ const NAV = [
   { to: '/applications', label: 'Applications', icon: GraduationCap },
   { to: '/courses', label: 'Courses', icon: BookOpen },
   { to: '/study', label: 'Study', icon: CalendarCheck },
+  { to: '/learning', label: 'Learning', icon: Brain },
   { to: '/calendar', label: 'Calendar', icon: CalendarDays },
   { to: '/documents', label: 'Documents', icon: Files },
   { to: '/routines', label: 'Routines', icon: Sparkles },
