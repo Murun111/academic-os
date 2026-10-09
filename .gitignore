@@ -93,3 +93,4 @@ dist/
 *.spec
 vendor/
 delivery/
+.frugal-fable/

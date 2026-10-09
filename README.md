@@ -52,3 +52,7 @@ Tests: `.venv/bin/python -m pytest tests/ -q`
 ## Your data
 
 Everything is plain files under `~/.academic-os`: JSONL ledgers, markdown notes, and your attached documents. Point the in-app backup at any folder (a cloud-synced one works; credentials are excluded from backups). Restore is one click and takes a safety snapshot first.
+
+## License
+
+Business Source License 1.1. See [LICENSE](LICENSE). Free for personal use and for educational institutions and non-profits; any paid product or service built on it needs a commercial license. On 2030-10-06 each released version becomes MIT.
