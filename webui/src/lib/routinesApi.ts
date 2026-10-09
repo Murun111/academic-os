@@ -37,6 +37,11 @@ export interface EssayFeedback {
   model: string
 }
 
+export interface ResumeFeedback {
+  feedback: string
+  model: string
+}
+
 export class RoutinesApiError extends Error {
   offline: boolean
   constructor(message: string, offline: boolean) {
@@ -79,4 +84,6 @@ export const routinesApi = {
     rpostLlm<DeadlineDigestBriefing>('/deadline-digest/brief', { days }),
   essayFeedback: (text: string, promptHint = '') =>
     rpostLlm<EssayFeedback>('/essay-feedback', { text, prompt_hint: promptHint }),
+  resumeFeedback: (content: string, title = '') =>
+    rpostLlm<ResumeFeedback>('/resume-feedback', { content, title }),
 }

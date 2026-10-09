@@ -381,3 +381,24 @@ async def test_hub_chat_selects_online_backend_and_none_when_offline(monkeypatch
     monkeypatch.setattr(learning_ai, "status_all", online)
     monkeypatch.setattr(learning_ai, "get_backend", lambda name: FakeBackend())
     assert await learning_ai._hub_chat([]) == "ok:m1"
+
+
+def test_extract_json_tolerates_small_model_slips():
+    # Seen live from qwen2.5:3b: Python triple-quoted strings and raw newlines in JSON strings.
+    from backend.services.learning_ai import _extract_json_block
+    tq = '{\n "title": "T",\n "summary_markdown": """\n## A\nsays "hi"\n"""\n}'
+    assert _extract_json_block(tq) == {"title": "T", "summary_markdown": '## A\nsays "hi"'}
+    assert _extract_json_block('{"a": "x\ny"}') == {"a": "x\ny"}
+
+
+def test_ai_generate_retries_once_on_malformed_output(client: TestClient, monkeypatch):
+    import json as _json
+    replies = iter(["{broken", _json.dumps({"title": "G", "summary_markdown": "## s"})])
+    calls = []
+
+    async def fake(messages):
+        calls.append(1)
+        return next(replies)
+    monkeypatch.setattr("backend.services.learning_ai._hub_chat", fake)
+    r = client.post("/api/learning/generate/guide", json={"topic": "T"})
+    assert r.status_code == 200 and len(calls) == 2

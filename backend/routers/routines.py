@@ -11,6 +11,7 @@ from backend.services.routines import (
     deadline_digest,
     deadline_digest_llm,
     essay_feedback,
+    resume_feedback,
 )
 
 router = APIRouter(prefix="/api/routines", tags=["routines"])
@@ -19,6 +20,11 @@ router = APIRouter(prefix="/api/routines", tags=["routines"])
 class EssayFeedbackRequest(BaseModel):
     text: str = Field(..., min_length=1)
     prompt_hint: str = ""
+
+
+class ResumeFeedbackRequest(BaseModel):
+    content: str = Field(..., min_length=1)
+    title: str = ""
 
 
 class DeadlineBriefRequest(BaseModel):
@@ -73,5 +79,14 @@ async def post_essay_feedback(request: Request, body: EssayFeedbackRequest) -> A
     ollama = request.app.state.ollama
     try:
         return await essay_feedback(ollama, text=body.text, prompt_hint=body.prompt_hint)
+    except Exception:
+        return JSONResponse(status_code=503, content={"detail": "Local model offline — start Ollama"})
+
+
+@router.post("/resume-feedback")
+async def post_resume_feedback(request: Request, body: ResumeFeedbackRequest) -> Any:
+    ollama = request.app.state.ollama
+    try:
+        return await resume_feedback(ollama, content=body.content, title=body.title)
     except Exception:
         return JSONResponse(status_code=503, content={"detail": "Local model offline — start Ollama"})

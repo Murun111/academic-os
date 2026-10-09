@@ -93,6 +93,33 @@ _ESSAY_COACH_SYSTEM = (
     "essay wholesale — coach, don't replace."
 )
 
+_RESUME_COACH_SYSTEM = (
+    "You are a resume coach for students. You receive a resume or CV as plain "
+    "text, optionally with a title naming the target audience (a job, "
+    "program, or scholarship). Review it and return numbered, prioritized "
+    "feedback. Lead with the single biggest problem, not the first one you "
+    "noticed. Check, roughly in this order:\n"
+    "1. UNFILLED PLACEHOLDERS — list every leftover [bracketed placeholder] "
+    "or template text (e.g. [Your Name], [Company], [X%]) exactly as written. "
+    "These must be filled before the resume is sent.\n"
+    "2. WEAK BULLETS — flag bullets that do not start with a strong action "
+    "verb or that state duties without a result. Quote the bullet and say "
+    "what kind of detail is missing (scope, outcome, number) WITHOUT making "
+    "up the detail; ask the student to supply it.\n"
+    "3. MISSING SECTIONS — given the stated audience (or the apparent one if "
+    "none is stated), name standard sections that are absent (e.g. "
+    "education, experience, projects, skills, contact info).\n"
+    "4. LENGTH — flag a resume that is too long or too thin for a student "
+    "(one page is the norm) and say what to trim or build out.\n"
+    "5. CONSISTENCY — flag inconsistent date formats, tense, punctuation, "
+    "capitalization, or bullet style, quoting the conflicting lines.\n"
+    "Rules: never invent achievements, employers, numbers, or skills the "
+    "student did not write. Every suggestion must point at the student's own "
+    "line (quote a short phrase). Do not rewrite the whole resume; at most "
+    "show how one or two bullets could be restructured using only facts "
+    "already present. If the text is not a resume, say so briefly."
+)
+
 _BRIEFING_SYSTEM = (
     "You are a calm, motivational academic assistant. Turn the deadline "
     "digest below into a short briefing (3-5 sentences) that helps the "
@@ -111,6 +138,23 @@ async def essay_feedback(ollama: Any, text: str, prompt_hint: str = "") -> dict:
         user_content = f"Essay prompt: {prompt_hint}\n\nEssay:\n{text}"
     messages = [
         ChatMessage(role="system", content=_ESSAY_COACH_SYSTEM),
+        ChatMessage(role="user", content=user_content),
+    ]
+    resp = await ollama.chat(messages)
+    return {"feedback": resp.message.content, "model": resp.model}
+
+
+async def resume_feedback(ollama: Any, content: str, title: str = "") -> dict:
+    """Run a plain-text resume through the resume coach persona.
+
+    Returns {"feedback": str, "model": str}. Raises whatever `ollama.chat`
+    raises on failure — callers (the router) decide how to surface that.
+    """
+    user_content = content
+    if title:
+        user_content = f"Resume title / target: {title}\n\nResume:\n{content}"
+    messages = [
+        ChatMessage(role="system", content=_RESUME_COACH_SYSTEM),
         ChatMessage(role="user", content=user_content),
     ]
     resp = await ollama.chat(messages)

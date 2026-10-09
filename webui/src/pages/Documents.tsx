@@ -10,6 +10,9 @@ import {
 } from '../lib/documentsApi'
 import { Btn, EmptyState, Mono, Panel, Pill, timeAgo } from '../components/ui'
 import { routinesApi } from '../lib/routinesApi'
+import { useOs } from '../lib/store'
+import { stageConfig } from '../lib/stageConfig'
+import { RESUME_TEMPLATES, templatesFor, type ResumeTemplate } from '../lib/resumeTemplates'
 
 const KIND_FILTERS: Array<DocumentKind | 'all'> = ['all', ...DOCUMENT_KINDS]
 
@@ -31,6 +34,16 @@ export function Documents() {
   const [showAdd, setShowAdd] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newKind, setNewKind] = useState<DocumentKind>('essay')
+  const [showAllTemplates, setShowAllTemplates] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const [creating, setCreating] = useState(false)
+  const creatingRef = useRef(false) // sync guard: state alone lets a fast double-click through
+  const stage = useOs((s) => s.stage)
+  const cfg = stageConfig(stage)
+  const stageTemplates = templatesFor(cfg.resumeTemplates)
+  const otherTemplates = Object.values(RESUME_TEMPLATES).filter(
+    (t) => !cfg.resumeTemplates.includes(t.id),
+  )
 
   const load = () => {
     setLoading(true)
@@ -57,15 +70,48 @@ export function Documents() {
     titleQuery.trim() === '' ? true : d.title.toLowerCase().includes(titleQuery.trim().toLowerCase()),
   )
 
-  const addDocument = async () => {
-    if (!newTitle.trim()) return
-    const res = await documentsApi.add({ title: newTitle.trim(), kind: newKind })
-    if (res?.ok) {
+  const addDocument = async (template?: ResumeTemplate) => {
+    const title = newTitle.trim() || template?.label || ''
+    if (!title || creatingRef.current) return
+    creatingRef.current = true
+    setCreating(true)
+    setCreateError('')
+    try {
+      const res = await documentsApi.add({ title, kind: newKind })
+      if (!res?.ok) {
+        setCreateError('Could not create the document.')
+        return
+      }
+      if (template) {
+        // create does not accept content, so set it with a follow-up update
+        const upd = await documentsApi.update(res.item.id, { content: template.body })
+        if (!upd?.ok) setCreateError('Created, but the template text could not be saved. Open the document and paste it in.')
+      }
       setNewTitle('')
       setShowAdd(false)
+      setShowAllTemplates(false)
       load()
+    } finally {
+      creatingRef.current = false
+      setCreating(false)
     }
   }
+
+  const templateButton = (t: ResumeTemplate, recommended: boolean) => (
+    <button
+      key={t.id}
+      type="button"
+      onClick={() => void addDocument(t)}
+      disabled={creating}
+      className="rounded-lg px-3 py-2 text-left hover:bg-ink/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink/40"
+    >
+      <span className="block text-[13px] text-hi">
+        {t.label}
+        {recommended && <span className="ml-2 font-mono text-[10.5px] text-low">recommended</span>}
+      </span>
+      <span className="block text-[12px] text-low">{t.hint}</span>
+    </button>
+  )
 
   return (
     <div className="mx-auto max-w-[900px]">
@@ -75,23 +121,26 @@ export function Documents() {
           <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Documents</h1>
         </div>
         <span data-tour="docs-add">
-          <Btn kind="primary" className="flex items-center gap-1.5" onClick={() => setShowAdd((s) => !s)}>
+          <Btn kind="primary" className="flex items-center gap-1.5" onClick={() => { setCreateError(''); setShowAdd((s) => !s) }}>
             <Plus size={13} /> Add document
           </Btn>
         </span>
       </div>
 
       {showAdd && (
-        <Panel className="mb-5 flex items-center gap-2.5 px-3.5 py-2.5">
+        <Panel className="mb-5 px-3.5 py-2.5">
+        <div className="flex items-center gap-2.5">
           <input
             autoFocus
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void addDocument() }}
+            aria-label="Document title"
             placeholder="Document title…"
             className="flex-1 bg-transparent text-[13.5px] text-hi outline-none placeholder:text-low"
           />
           <select
+            aria-label="Document kind"
             value={newKind}
             onChange={(e) => setNewKind(e.target.value as DocumentKind)}
             className="rounded-lg bg-transparent px-1 py-1.5 font-mono text-[11.5px] text-low outline-none hover:text-mid"
@@ -100,11 +149,37 @@ export function Documents() {
               <option key={k} value={k} className="bg-raise">{k}</option>
             ))}
           </select>
-          <Btn kind="primary" onClick={() => void addDocument()} disabled={!newTitle.trim()}>
+          <Btn kind="primary" onClick={() => void addDocument()} disabled={!newTitle.trim() || creating}>
             Create
           </Btn>
-        </Panel>
+        </div>
+        {newKind === 'cv' && (
+          <div className="mt-3 border-t border-ink/10 pt-3" role="group" aria-label="Start from a template">
+            <p className="label-mono mb-1.5">start from a template</p>
+            <div className="flex flex-col">
+              {stageTemplates.map((t, i) => templateButton(t, i === 0))}
+            </div>
+            {otherTemplates.length > 0 && (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  aria-expanded={showAllTemplates}
+                  onClick={() => setShowAllTemplates((v) => !v)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-[12px] text-low hover:text-mid focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink/40"
+                >
+                  {showAllTemplates ? <ChevronDown size={12} /> : <ChevronRight size={12} />} All templates
+                </button>
+                {showAllTemplates && (
+                  <div className="flex flex-col">{otherTemplates.map((t) => templateButton(t, false))}</div>
+                )}
+              </div>
+            )}
+            <p className="px-3 pt-1 text-[12px] text-low">Or type a title and press Create for a blank CV.</p>
+          </div>
+        )}
+      </Panel>
       )}
+      {createError && <p role="alert" className="mb-4 text-[12px] text-fail">{createError}</p>}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="panel flex items-center gap-2.5 px-3.5 py-2">
@@ -246,12 +321,17 @@ function DocumentRow({
     }
   }
 
+  const isCv = doc.kind === 'cv'
+  const coachLabel = isCv ? 'resume coach' : 'essay coach'
+
   const getFeedback = async () => {
     if (!content.trim()) return
     setCoachBusy(true)
     setFeedback('')
-    const f = await routinesApi.essayFeedback(content, doc.title)
-    setFeedback(f ? f.feedback : 'The essay coach is offline — start the local AI in Settings.')
+    const f = isCv
+      ? await routinesApi.resumeFeedback(content, doc.title)
+      : await routinesApi.essayFeedback(content, doc.title)
+    setFeedback(f ? f.feedback : `The ${coachLabel} is offline — start the local AI in Settings.`)
     setCoachBusy(false)
   }
 
@@ -364,7 +444,7 @@ function DocumentRow({
           </div>
 
           <div className="mb-1.5 flex items-center justify-between">
-            <p className="label-mono">the essay itself</p>
+            <p className="label-mono">{isCv ? 'the resume itself' : 'the essay itself'}</p>
             {contentSaved && <Mono className="text-acc">saved</Mono>}
           </div>
           <textarea
@@ -385,7 +465,7 @@ function DocumentRow({
           </div>
           {feedback && (
             <div className="mb-4 rounded-[10px] border border-hairline bg-raise2 px-3 py-2.5">
-              <p className="label-mono mb-1.5">essay coach</p>
+              <p className="label-mono mb-1.5">{coachLabel}</p>
               <div className="flex flex-col gap-1.5">
                 {feedback.split('\n').filter((l) => l.trim()).map((l, i) => (
                   <p key={i} className="text-[12.5px] leading-relaxed text-mid">{l}</p>

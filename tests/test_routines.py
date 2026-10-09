@@ -149,6 +149,20 @@ async def test_essay_feedback_with_fake_ollama():
 
 
 @pytest.mark.asyncio
+async def test_resume_feedback_with_fake_ollama():
+    ollama = FakeOllama(content="1. Fill [Your Name].", model="fake-model")
+    result = await routines_service.resume_feedback(ollama, content="Worked on stuff.", title="SWE intern")
+
+    assert result == {"feedback": "1. Fill [Your Name].", "model": "fake-model"}
+    sent = ollama.calls[0]
+    assert sent[0].role == "system"
+    assert "resume coach" in sent[0].content.lower()
+    assert "placeholder" in sent[0].content.lower()
+    assert "SWE intern" in sent[1].content
+    assert "Worked on stuff." in sent[1].content
+
+
+@pytest.mark.asyncio
 async def test_deadline_digest_llm_with_fake_ollama(monkeypatch: pytest.MonkeyPatch):
     apps = FakeAppsService([fake_application("a1", "Fulbright", "", "2026-08-10")])
     courses = FakeCoursesService([])
@@ -245,4 +259,34 @@ def test_post_essay_feedback_503_when_ollama_fails(client):
     c, app = client
     app.state.ollama = FakeOllama(fail=True)
     r = c.post("/api/routines/essay-feedback", json={"text": "My essay draft."})
+    assert r.status_code == 503
+
+
+# === API: resume-feedback ===
+
+def test_post_resume_feedback_ok(client):
+    c, _app = client
+    r = c.post("/api/routines/resume-feedback", json={"content": "Jane Doe\n- Did things", "title": "Intern"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["feedback"] == "looks good"
+    assert body["model"] == "fake-model"
+
+
+def test_post_resume_feedback_422_on_empty_content(client):
+    c, _app = client
+    r = c.post("/api/routines/resume-feedback", json={"content": ""})
+    assert r.status_code == 422
+
+
+def test_post_resume_feedback_422_on_missing_content(client):
+    c, _app = client
+    r = c.post("/api/routines/resume-feedback", json={})
+    assert r.status_code == 422
+
+
+def test_post_resume_feedback_503_when_ollama_fails(client):
+    c, app = client
+    app.state.ollama = FakeOllama(fail=True)
+    r = c.post("/api/routines/resume-feedback", json={"content": "My resume."})
     assert r.status_code == 503

@@ -47,6 +47,21 @@ async def _ai_call(messages: list[ChatMessage]) -> str:
     return content
 
 
+async def _ai_structured(prompt: str, parse, what: str, attempts: int = 2):
+    """Call the model and parse its output, retrying once on malformed output.
+
+    Small local models produce broken JSON (missing commas, wrong quoting) a
+    meaningful fraction of the time at random; one retry fixes most of it.
+    `parse` returns the parsed value or a falsy value when unusable.
+    """
+    for _ in range(attempts):
+        content = await _ai_call([ChatMessage(role="user", content=prompt)])
+        result = parse(_extract_json_block(content))
+        if result:
+            return result
+    raise LearningAIBadOutput(f"The AI model returned {what} in an unreadable format. Try again.")
+
+
 def _extract_json_block(text: str) -> Optional[Any]:
     """Extract JSON data from code blocks or raw text."""
     # Look for ```json ... ``` or ``` ... ```
@@ -56,15 +71,20 @@ def _extract_json_block(text: str) -> Optional[Any]:
     else:
         content = text.strip()
 
+    # Small local models sometimes emit Python-style """triple-quoted""" strings
+    # (seen from qwen2.5:3b on study guides); turn them into valid JSON strings.
+    content = re.sub(r'"""([\s\S]*?)"""', lambda m: json.dumps(m.group(1).strip()), content)
+
+    # strict=False tolerates raw newlines/tabs inside strings, another common slip.
     try:
-        return json.loads(content)
+        return json.loads(content, strict=False)
     except Exception:
         # Try finding the first [ or { to last ] or }
         first_b = min([i for i in [content.find('['), content.find('{')] if i != -1], default=-1)
         last_b = max([content.rfind(']'), content.rfind('}')])
         if first_b != -1 and last_b != -1 and last_b > first_b:
             try:
-                return json.loads(content[first_b:last_b+1])
+                return json.loads(content[first_b:last_b+1], strict=False)
             except Exception:
                 pass
     return None
@@ -160,11 +180,8 @@ Format example:
   }}
 ]
 """
-    content = await _ai_call([ChatMessage(role="user", content=prompt)])
-    parsed = _extract_json_block(content)
-    cards = _normalize_cards(parsed) if isinstance(parsed, list) else []
-    if not cards:
-        raise LearningAIBadOutput("The AI model returned flashcards in an unreadable format. Try again.")
+    cards = await _ai_structured(
+        prompt, lambda p: _normalize_cards(p) if isinstance(p, list) else [], "flashcards")
     return cards[:count]
 
 
@@ -200,11 +217,8 @@ Format example:
   }}
 ]
 """
-    content = await _ai_call([ChatMessage(role="user", content=prompt)])
-    parsed = _extract_json_block(content)
-    questions = _normalize_questions(parsed) if isinstance(parsed, list) else []
-    if not questions:
-        raise LearningAIBadOutput("The AI model returned a quiz in an unreadable format. Try again.")
+    questions = await _ai_structured(
+        prompt, lambda p: _normalize_questions(p) if isinstance(p, list) else [], "a quiz")
     return questions[:num_questions]
 
 
@@ -223,12 +237,10 @@ Return ONLY a valid JSON object with the following keys:
 - "formulas": Array of 2-4 key equations, rules, or formulas (list of strings)
 - "tags": Array of relevant topic tags (list of strings)
 """
-    content = await _ai_call([ChatMessage(role="user", content=prompt)])
-    parsed = _extract_json_block(content)
-    guide = _normalize_guide(parsed, topic) if isinstance(parsed, dict) else None
-    if not guide or not guide["summary_markdown"]:
-        raise LearningAIBadOutput("The AI model returned a study guide in an unreadable format. Try again.")
-    return guide
+    def parse(p):
+        guide = _normalize_guide(p, topic) if isinstance(p, dict) else None
+        return guide if guide and guide["summary_markdown"] else None
+    return await _ai_structured(prompt, parse, "a study guide")
 
 
 async def socratic_tutor_response(
