@@ -263,6 +263,10 @@ function TakeQuiz({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const startedAt = useRef(Date.now())
+  const limitSecs = quiz.time_limit_mins > 0 ? quiz.time_limit_mins * 60 : 0
+  const [remaining, setRemaining] = useState(limitSecs)
+  const submitRef = useRef<() => void>(() => {})
+  const autoSubmitted = useRef(false)
 
   const total = quiz.questions.length
   const q: Question | undefined = quiz.questions[idx]
@@ -284,6 +288,23 @@ function TakeQuiz({
     }
   }
 
+  submitRef.current = () => { if (!submitting) void submit() }
+
+  // Countdown for timed quizzes. At zero the answers given so far are submitted.
+  useEffect(() => {
+    if (!limitSecs) return
+    const tick = () => {
+      const left = Math.max(0, limitSecs - Math.round((Date.now() - startedAt.current) / 1000))
+      setRemaining(left)
+      if (left === 0 && !autoSubmitted.current) {
+        autoSubmitted.current = true
+        submitRef.current()
+      }
+    }
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [limitSecs])
+
   if (!q) {
     return (
       <Panel>
@@ -299,7 +320,16 @@ function TakeQuiz({
     <Panel>
       <PanelHead
         label={`${quiz.title} · ${idx + 1} of ${total}`}
-        right={<Btn onClick={onExit}>Exit</Btn>}
+        right={
+          <span className="flex items-center gap-3">
+            {limitSecs > 0 && (
+              <Mono className={remaining <= 60 ? 'text-fail' : 'text-low'}>
+                {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')} left
+              </Mono>
+            )}
+            <Btn onClick={onExit}>Exit</Btn>
+          </span>
+        }
       />
       <div className="flex flex-col gap-4 px-5 pb-5">
         <div className="h-1 overflow-hidden rounded-full bg-ink/8" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={answered} aria-label="Answered questions">

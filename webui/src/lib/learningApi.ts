@@ -345,6 +345,11 @@ export function isUnavailable(e: unknown): boolean {
   return e instanceof LearningApiError && (e.status === 503 || e.status === 0)
 }
 
+/** True when the server says the thing no longer exists (deleted elsewhere). */
+export function isNotFound(e: unknown): boolean {
+  return e instanceof LearningApiError && e.status === 404
+}
+
 /* --------------------------------- helpers -------------------------------- */
 
 async function errorDetail(r: Response): Promise<string> {
@@ -356,6 +361,25 @@ async function errorDetail(r: Response): Promise<string> {
     /* body not JSON */
   }
   return r.statusText || `HTTP ${r.status}`
+}
+
+// Fired after every successful write so the page header stats (and mounted
+// panels that list server data) can refresh without each panel wiring a callback.
+export const LEARNING_MUTATED = 'learning:mutated'
+
+function announceMutation(): void {
+  try {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(LEARNING_MUTATED))
+  } catch {
+    /* non-browser environment */
+  }
+}
+
+/** Subscribe to successful writes; returns the unsubscribe function. */
+export function onLearningMutated(cb: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener(LEARNING_MUTATED, cb)
+  return () => window.removeEventListener(LEARNING_MUTATED, cb)
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -370,6 +394,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new LearningApiError(0, e instanceof Error ? e.message : 'Network error')
   }
   if (!r.ok) throw new LearningApiError(r.status, await errorDetail(r))
+  if (method !== 'GET' && !path.startsWith('/generate') && path !== '/tutor') announceMutation()
   return (await r.json()) as T
 }
 
@@ -441,6 +466,7 @@ async function postForm<T>(path: string, form: FormData): Promise<T> {
     throw new LearningApiError(0, e instanceof Error ? e.message : 'Network error')
   }
   if (!r.ok) throw new LearningApiError(r.status, await errorDetail(r))
+  if (!path.endsWith('/preview')) announceMutation()
   return (await r.json()) as T
 }
 
@@ -460,7 +486,10 @@ export const learning = {
     request<Card>('POST', `/decks/${enc(deckId)}/cards`, card),
   deleteCard: (deckId: string, cardId: string) =>
     request<OkResponse>('DELETE', `/decks/${enc(deckId)}/cards/${enc(cardId)}`),
-  dueCards: (deckId?: string) => request<Card[]>('GET', `/due-cards${qs({ deck_id: deckId })}`),
+  addCards: (deckId: string, cards: CardCreate[]) =>
+    request<{ cards: Card[] }>('POST', `/decks/${enc(deckId)}/cards/bulk`, { cards }),
+  dueCards: (deckId?: string, limit?: number) =>
+    request<Card[]>('GET', `/due-cards${qs({ deck_id: deckId, limit: limit === undefined ? undefined : String(limit) })}`),
   reviewCard: (deckId: string, cardId: string, rating: SrsRating) =>
     request<Card>('POST', `/decks/${enc(deckId)}/cards/${enc(cardId)}/review`, { rating }),
 

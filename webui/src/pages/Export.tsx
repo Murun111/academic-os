@@ -9,7 +9,7 @@ import { useOs } from '../lib/store'
 
 const STATUS_TEXT: Record<string, string> = {
   researching: 'Researching', preparing: 'Preparing', submitted: 'Submitted',
-  interview: 'Interview', decision: 'Decision',
+  secondaries: 'Secondaries', interview: 'Interview', decision: 'Decision',
 }
 
 function usd(n: number): string {
@@ -25,7 +25,7 @@ export function Export() {
   useEffect(() => {
     void applicationsApi.list().then(setApps)
     void applicationsApi.costs().then(setCosts)
-    void coursesApi.listCourses().then((r) => setCourses(r.courses as CourseSummary[]))
+    void coursesApi.summary().then((r) => setCourses(r.courses))
   }, [])
 
   const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
@@ -56,6 +56,7 @@ export function Export() {
         <p className="label-mono mb-2">applications + scholarships</p>
         {sorted.length === 0 && <p className="text-[13px] text-mid">No applications yet.</p>}
         {sorted.length > 0 && (
+          <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr className="border-b border-line text-left">
@@ -73,7 +74,7 @@ export function Export() {
                   <td className="py-1.5 pr-3 text-hi">{a.name}{a.org ? <span className="text-low"> · {a.org}</span> : ''}</td>
                   <td className="py-1.5 pr-3 text-mid">{a.type}</td>
                   <td className="py-1.5 pr-3 font-mono text-[11.5px] text-mid">{a.deadline ?? '—'}</td>
-                  <td className="py-1.5 pr-3 text-mid">{STATUS_TEXT[a.status]}</td>
+                  <td className="py-1.5 pr-3 text-mid">{STATUS_TEXT[a.status] ?? a.status}</td>
                   <td className="py-1.5 pr-3 font-mono text-[11.5px] text-mid">
                     {a.requirements.length > 0 ? requirementsProgress(a.requirements) : '—'}
                   </td>
@@ -82,6 +83,7 @@ export function Export() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 
@@ -92,7 +94,7 @@ export function Export() {
           <div className="flex flex-wrap gap-x-8 gap-y-1 text-[13px]">
             <span className="text-mid">Application fees still due: <span className="text-hi">{usd(costs.fees_due)}</span></span>
             <span className="text-mid">Fees waived: <span className="text-hi">{usd(costs.fees_waived)}</span></span>
-            <span className="text-mid">Scholarships applied for: <span className="text-hi">{usd(costs.potential_awards)}</span></span>
+            <span className="text-mid">Potential scholarship awards: <span className="text-hi">{usd(costs.potential_awards)}</span></span>
             <span className="text-mid">Awards won: <span className="text-hi">{usd(costs.won_awards)}</span></span>
           </div>
         </section>
@@ -117,7 +119,8 @@ export function Export() {
       {/* 4. grades snapshot */}
       {courses.length > 0 && (
         <section className="mb-6">
-          <p className="label-mono mb-2">current courses + grades</p>
+          <p className="label-mono mb-2">courses + grades</p>
+          <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr className="border-b border-line text-left">
@@ -130,7 +133,7 @@ export function Export() {
               {courses.map((c) => (
                 <tr key={c.id} className="border-b border-hairline">
                   <td className="py-1.5 pr-3 text-hi">{c.name}</td>
-                  <td className="py-1.5 pr-3 text-mid">{c.term}</td>
+                  <td className="py-1.5 pr-3 text-mid">{c.term}{c.archived ? ' (past term)' : ''}</td>
                   <td className="py-1.5 font-mono text-[11.5px] text-mid">
                     {c.grade != null ? `${c.grade.toFixed(1)}%` : '—'}
                   </td>
@@ -138,6 +141,7 @@ export function Export() {
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 

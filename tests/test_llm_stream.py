@@ -268,3 +268,27 @@ def test_stream_abort_mid_stream_persists_partial_text(monkeypatch):
     assert msgs[-2]["content"] == "hi"
     assert msgs[-1]["role"] == "assistant"
     assert msgs[-1]["content"] == "Hello"  # "Hel" + "lo"
+
+
+def test_chat_context_recall_runs_off_the_event_loop(client, monkeypatch):
+    """F85: recall/embedding is blocking HTTP; it must not run on the loop thread."""
+    seen = {}
+    real = app_mod._chat_system_context
+
+    def _spy(text):
+        try:
+            asyncio.get_running_loop()
+            seen["on_loop"] = True
+        except RuntimeError:
+            seen["on_loop"] = False
+        return real(text)
+
+    monkeypatch.setattr(app_mod, "_chat_system_context", _spy)
+    monkeypatch.setattr(app_mod, "get_backend", lambda name: _FakeStreamBackend(
+        [{"done": True, "message": {"role": "assistant", "content": "ok", "backend": "ollama",
+                                    "model": "m", "tokens": 1, "elapsed_ms": 1}}]))
+    with client.stream("POST", "/api/llms/chat/stream",
+                       json={"backend": "ollama", "model": "m",
+                             "messages": [{"role": "user", "content": "hi"}]}) as r:
+        r.read()
+    assert seen["on_loop"] is False

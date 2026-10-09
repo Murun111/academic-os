@@ -6,7 +6,7 @@ high-signal notes. This module is that pass — the "memory manager" that
 keeps the active spine small enough to page into a context window.
 
 It operates ONLY on the distilled kind-notes
-(``Agentic OS/memory/{facts,decisions,todos,preferences,entities,events}.md``).
+(``notes/memory/{facts,decisions,todos,preferences,entities,events}.md``).
 It NEVER touches ``memory/log/`` — the daily log is the raw, append-only
 audit trail (Karpathy's running log) and is left intact by design.
 
@@ -19,7 +19,7 @@ Per file, in order:
   6. rewrite the note with the survivors (newest first)
 
 Nothing is ever deleted: every removed bullet is appended to
-``Agentic OS/memory/_archive/<file>`` so compaction is fully reversible.
+``notes/memory/_archive/<file>`` so compaction is fully reversible.
 Finally, ``_index.md`` (a map-of-content) is regenerated.
 
 Public interface:
@@ -40,7 +40,7 @@ from backend.services.tools import vault_read, vault_write
 
 log = logging.getLogger(__name__)
 
-_MEMORY_BASE = "Agentic OS/memory"
+_MEMORY_BASE = "notes/memory"  # must match memory_writer._MEMORY_BASE
 _ARCHIVE_DIR = f"{_MEMORY_BASE}/_archive"
 _INDEX_PATH = f"{_MEMORY_BASE}/_index.md"
 

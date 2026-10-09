@@ -24,7 +24,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -67,6 +67,7 @@ class IcsEvent:
     uid: str
     summary: str
     due: str | None  # ISO date
+    recurrence_id: str = ""  # set on a modified/recurring instance
 
 
 def _unfold(text: str) -> list[str]:
@@ -85,13 +86,42 @@ def _unescape(v: str) -> str:
     return v.replace("\\n", " ").replace("\\,", ",").replace("\\;", ";").strip()
 
 
-def _parse_dt(value: str) -> str | None:
-    """ICS date or datetime → ISO date string (we only need the day)."""
+def _parse_dt(value: str, params: str = "") -> str | None:
+    """ICS date or datetime -> ISO date string in the student's LOCAL timezone.
+
+    All-day values (VALUE=DATE / 8 digits) keep their calendar date. A UTC
+    value ('...Z') or one carrying TZID is converted to local time first, so a
+    deadline of 11:59pm US Eastern ('20260916T035900Z') lands on the 15th, not
+    the 16th. Floating times keep their date part."""
     value = value.strip()
-    m = re.match(r"^(\d{4})(\d{2})(\d{2})", value)
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?", value, re.I)
     if not m:
         return None
-    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        day = date(y, mo, d)
+    except ValueError:
+        return None
+    if m.group(4) is None:
+        return day.isoformat()
+    try:
+        dt = datetime(y, mo, d, int(m.group(4)), int(m.group(5)), int(m.group(6) or 0))
+    except ValueError:
+        return day.isoformat()
+    tz = None
+    if m.group(7):
+        tz = timezone.utc
+    else:
+        tzid = re.search(r"TZID=([^;:]+)", params, re.I)
+        if tzid:
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(tzid.group(1).strip('"'))
+            except Exception:  # noqa: BLE001 - unknown zone: keep the raw date
+                tz = None
+    if tz is None:
+        return day.isoformat()
+    return dt.replace(tzinfo=tz).astimezone().date().isoformat()
 
 
 def parse_ics(text: str) -> list[IcsEvent]:
@@ -103,20 +133,24 @@ def parse_ics(text: str) -> list[IcsEvent]:
     for line in _unfold(text):
         key, _, value = line.partition(":")
         name = key.split(";")[0].upper()
+        params = key.partition(";")[2]
         if name == "BEGIN" and value.strip().upper() == "VEVENT":
             cur = {}
         elif name == "END" and value.strip().upper() == "VEVENT":
             if cur is not None and cur.get("uid") and cur.get("summary"):
                 events.append(IcsEvent(uid=cur["uid"], summary=cur["summary"],
-                                       due=cur.get("due")))
+                                       due=cur.get("due"),
+                                       recurrence_id=cur.get("rid", "")))
             cur = None
         elif cur is not None:
             if name == "UID":
                 cur["uid"] = value.strip()
             elif name == "SUMMARY":
                 cur["summary"] = _unescape(value)
+            elif name == "RECURRENCE-ID":
+                cur["rid"] = value.strip()
             elif name in ("DTSTART", "DTEND", "DUE") and "due" not in cur:
-                iso = _parse_dt(value)
+                iso = _parse_dt(value, params)
                 if iso:
                     cur["due"] = iso
     return events
@@ -132,6 +166,18 @@ def split_course(summary: str) -> tuple[str, str]:
     if m:
         return m.group(1).strip(), m.group(2).strip()
     return summary.strip(), "Synced calendar"
+
+
+def _safe_error(exc: Exception, url: str, host: str) -> str:
+    """Error text for the client: the feed URL embeds a secret token and
+    httpx puts it in HTTPStatusError's message, so never pass str(exc) raw."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    msg = str(exc)
+    for needle in (url, url.split("?")[0]):
+        if needle:
+            msg = msg.replace(needle, host or "feed")
+    return f"{type(exc).__name__}: {msg}"
 
 
 # ── sync service ─────────────────────────────────────────────────
@@ -212,15 +258,28 @@ class IcsSyncService:
                 events = parse_ics(r.text)
             except Exception as e:
                 result["errors"].append(
-                    {"feed_id": i, "host": host, "error": f"{type(e).__name__}: {e}"})
+                    {"feed_id": i, "host": host, "error": _safe_error(e, url, host)})
                 continue
 
             courses = {c.name: c for c in courses_service.list_courses()}
             existing = {a.external_id: a for a in courses_service.list_assignments()
                         if a.external_id}
 
+            # Events sharing a UID (recurring instances) need distinct keys,
+            # otherwise one stored row flip-flops between their dates. Plain
+            # UID stays the key for ordinary events (existing data keeps matching).
+            uid_counts: dict[str, int] = {}
+            for ev in events:
+                uid_counts[ev.uid] = uid_counts.get(ev.uid, 0) + 1
+            claimed: set[str] = set()
+
             for ev in events:
                 title, course_name = split_course(ev.summary)
+                if course_name in courses and courses[course_name].source == "canvas":
+                    # Canvas already syncs this course with richer data; a feed
+                    # copy would just re-create a duplicate after removal.
+                    result["skipped_canvas"] = result.get("skipped_canvas", 0) + 1
+                    continue
                 if course_name not in courses:
                     # term is required by the service; synced courses get a
                     # marker term the student can rename
@@ -228,16 +287,28 @@ class IcsSyncService:
                         name=course_name, term="Synced", instructor="", source="ics")
                 course = courses[course_name]
 
-                prev = existing.get(ev.uid)
+                key = ev.uid
+                if ev.recurrence_id or uid_counts[ev.uid] > 1:
+                    key = f"{ev.uid}#{ev.recurrence_id or ev.due or ''}"
+                prev = existing.get(key)
+                if prev is None and key != ev.uid:
+                    legacy = existing.get(ev.uid)
+                    if legacy is not None and legacy.id not in claimed and legacy.due == ev.due:
+                        prev = legacy  # adopt the row stored before keys were split
+                if prev is not None:
+                    claimed.add(prev.id)
                 if prev is None:
-                    courses_service.add_assignment(
+                    created = courses_service.add_assignment(
                         course_id=course.id, title=title, due=ev.due,
-                        source="ics", external_id=ev.uid)
+                        source="ics", external_id=key)
+                    existing[key] = created
+                    claimed.add(created.id)
                     result["created"] += 1
                 elif prev.title != title or prev.due != ev.due:
                     # update sync-owned fields only — status/grade/notes are
                     # the student's and never clobbered
                     courses_service.update_assignment(prev.id, title=title, due=ev.due)
+                    prev.title, prev.due = title, ev.due
                     result["updated"] += 1
                 else:
                     result["unchanged"] += 1

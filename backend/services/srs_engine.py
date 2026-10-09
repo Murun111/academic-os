@@ -5,7 +5,7 @@ calculating next review intervals, repetition counts, and ease factors.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, time, timezone, timedelta
 from typing import TypedDict, Literal
 
 Rating = Literal["again", "hard", "good", "easy"]
@@ -40,6 +40,17 @@ def initial_srs_state() -> SrsState:
         "last_reviewed": "",
         "lapses": 0,
     }
+
+
+def _start_of_local_day(now: datetime, days: int) -> datetime:
+    """Local midnight `days` days after `now`, as UTC.
+
+    Snapping to the day boundary (instead of now + N*24h) keeps a daily habit
+    stable: a card reviewed at 20:30 is due all of the target day, not from 20:30.
+    """
+    local = now.astimezone()
+    target = local.date() + timedelta(days=days)
+    return datetime.combine(target, time.min).astimezone().astimezone(timezone.utc)
 
 
 def calculate_next_review(
@@ -79,7 +90,8 @@ def calculate_next_review(
             new_lapses += 1
         else:  # Hard (q == 2)
             new_repetition = max(1, repetition)
-            new_interval = max(1, int(max(1, interval_days) * 1.2))
+            base = max(1, interval_days)
+            new_interval = max(base + 1, int(round(base * 1.2)))
     else:
         # Success (Good or Easy)
         if repetition == 0:
@@ -95,7 +107,7 @@ def calculate_next_review(
                 new_interval = int(round(new_interval * 1.3))
             new_repetition = repetition + 1
 
-    next_date = now + timedelta(days=new_interval)
+    next_date = _start_of_local_day(now, new_interval)
 
     return {
         "ease_factor": new_ef,

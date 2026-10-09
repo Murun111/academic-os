@@ -45,6 +45,7 @@ class _Builder:
         self.result = ImportResult()
         self.media_cards = 0
         self.truncated = False
+        self.cut_sides = 0
 
     def add(
         self, front: str, back: str, tags: list[str] | None = None, html: bool = False,
@@ -56,6 +57,9 @@ class _Builder:
         if html:
             has_media = has_media or bool(_IMG_RE.search(front) or _IMG_RE.search(back))
         f, b = _clean(front, html), _clean(back, html)
+        if len(f) > MAX_SIDE_CHARS or len(b) > MAX_SIDE_CHARS:
+            self.cut_sides += 1
+            f, b = f[:MAX_SIDE_CHARS], b[:MAX_SIDE_CHARS]
         if not f:
             self.result.skipped += 1
             return
@@ -69,6 +73,15 @@ class _Builder:
         if self.truncated:
             self.result.warnings.append(
                 f"Deck has more than {MAX_CARDS} cards; only the first {MAX_CARDS} were imported"
+            )
+        if self.cut_sides:
+            self.result.warnings.append(
+                f"{self.cut_sides} cards had a side longer than {MAX_SIDE_CHARS} characters; the extra text was cut"
+            )
+        if not self.result.cards and self.result.skipped:
+            self.result.warnings.append(
+                "No rows had both a front and a back. Check that the separator matches your file "
+                "(tab, comma, semicolon or pipe)."
             )
         return self.result
 
@@ -87,7 +100,7 @@ def _clean(s: str, html: bool = False) -> str:
     s = s.replace("\xa0", " ").replace("\r\n", "\n").replace("\r", "\n")
     lines = [re.sub(r"[ \t\f\v]+", " ", ln).strip() for ln in s.split("\n")]
     s = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-    return s[:MAX_SIDE_CHARS]
+    return s
 
 
 def _split_cloze(text: str) -> tuple[str, str] | None:
@@ -107,7 +120,14 @@ def parse_quizlet_text(text: str, term_sep: str = "\t", row_sep: str = "\n") -> 
         return b.finish()
 
     if row_sep == "auto":
-        row_sep = "\n" if "\n" in text.strip() else ";"
+        row_sep = "\n"
+        if "\n" not in text.strip():
+            # A single line is one row, unless it clearly is several ';'-separated
+            # rows that each hold a term separator.
+            parts = [r for r in text.split(";") if r.strip()]
+            seps = ("\t", " - ", ",") if term_sep == "auto" else (term_sep,)
+            if len(parts) > 1 and all(any(sp in r for sp in seps) for r in parts):
+                row_sep = ";"
     if term_sep == "auto":
         if "\t" in text:
             term_sep = "\t"
@@ -134,6 +154,22 @@ def parse_quizlet_text(text: str, term_sep: str = "\t", row_sep: str = "\n") -> 
 # ------------------------------------------------------- Anki text / CSV
 
 _SEP_NAMES = {"tab": "\t", "comma": ",", "semicolon": ";", "space": " ", "pipe": "|", "colon": ":"}
+
+
+_HEADER_PAIRS = {
+    ("front", "back"), ("term", "definition"), ("question", "answer"),
+    ("word", "meaning"), ("word", "definition"), ("term", "meaning"),
+}
+
+
+def _sniff_delimiter(body: list[str]) -> str:
+    """Pick tab (Anki default) if any line has one, else the commonest of , ; |."""
+    sample = [ln for ln in body if ln.strip()][:20]
+    if any("\t" in ln for ln in sample):
+        return "\t"
+    counts = {d: sum(ln.count(d) for ln in sample) for d in (",", ";", "|")}
+    best = max(counts, key=lambda d: counts[d])
+    return best if counts[best] else "\t"
 
 
 _HEADER_RE = re.compile(r"#(\w[\w ]*?):(.*)$")
@@ -168,10 +204,10 @@ def parse_delimited(text: str) -> ImportResult:
     body = lines[start:]
 
     first = next((ln for ln in body if ln.strip()), "")
-    header_cells = [c.strip().lower() for c in re.split(r"[,\t;]", first)]
-    has_header = header_cells[:2] == ["front", "back"]
-    if has_header and not explicit_sep:
-        delimiter = "\t" if "\t" in first else ("," if "," in first else ";")
+    header_cells = [c.strip().strip('"').lower() for c in re.split(r"[,\t;|]", first)]
+    has_header = tuple(header_cells[:2]) in _HEADER_PAIRS
+    if not explicit_sep:
+        delimiter = _sniff_delimiter(body)
 
     rows = csv.reader(io.StringIO("\n".join(body)), delimiter=delimiter)
     header_skipped = False

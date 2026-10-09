@@ -166,3 +166,15 @@ def test_pdf_empty_password_encrypted_is_readable():
     w.write(buf)
     # decrypts with the empty password; a blank page then yields no text, not an "encrypted" error
     assert extract_text(buf.getvalue(), "a.pdf").strip() == ""
+
+
+def test_pdf_obj_flood_without_endobj_is_linear():
+    import time
+
+    data = b"%PDF-1.4\n" + b"1 0 obj " * 40000  # ~320 KB, no endobj anywhere
+    t = time.perf_counter()
+    try:
+        te._pdf_text_stdlib(data)
+    except ValueError:
+        pass
+    assert time.perf_counter() - t < 2.0  # was ~6s+ (quadratic)

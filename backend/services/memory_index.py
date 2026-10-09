@@ -49,7 +49,7 @@ _db_initialized = False
 
 def _ensure_db() -> None:
     global _db_initialized
-    if not _db_initialized:
+    if not _db_initialized or not _db_path().exists():
         init_db()
         _db_initialized = True
 
@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS memory_items (
     confidence    REAL NOT NULL DEFAULT 1.0,
     vault_path    TEXT NOT NULL DEFAULT '',
     embedding     TEXT
+);
+CREATE TABLE IF NOT EXISTS forgotten_items (
+    item_id TEXT PRIMARY KEY,
+    ts      TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -307,12 +311,31 @@ def delete_item(item_id: str) -> str | None:
         if row is None:
             return None
         conn.execute("DELETE FROM memory_items WHERE item_id = ?", (item_id,))
+        # Tombstone so re-extraction from the same thread cannot resurrect it.
+        conn.execute(
+            "INSERT OR REPLACE INTO forgotten_items (item_id, ts) VALUES (?, datetime('now'))",
+            (item_id,),
+        )
         return row["body"]
+
+
+def is_forgotten(item: MemoryItem) -> bool:
+    """True if the user deleted this exact fact before (same dedup id)."""
+    _ensure_db()
+    item_id = hashlib.sha1(item.dedup_key().encode()).hexdigest()
+    with sqlite3.connect(_db_path()) as conn:
+        return conn.execute(
+            "SELECT 1 FROM forgotten_items WHERE item_id = ?", (item_id,)
+        ).fetchone() is not None
 
 
 def delete_all() -> int:
     """Forget everything. Returns how many items were removed."""
     _ensure_db()
     with sqlite3.connect(_db_path()) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO forgotten_items (item_id, ts) "
+            "SELECT item_id, datetime('now') FROM memory_items"
+        )
         cur = conn.execute("DELETE FROM memory_items")
         return cur.rowcount

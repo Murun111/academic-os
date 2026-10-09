@@ -111,6 +111,7 @@ export interface ScholarshipImportResult {
   created: number
   skipped_duplicates: number
   errors: { row: number; message: string }[]
+  warnings?: { message: string }[]
   rows?: ScholarshipImportRow[] // present on dry runs only
 }
 
@@ -151,6 +152,15 @@ async function amutate<T>(path: string, method: string, body: unknown, fallback:
   }
 }
 
+// Like aget/amutate but surfaces failure: null (unreachable) or the server's detail.
+async function describeFailure(r: Response): Promise<string> {
+  try {
+    const j = await r.json()
+    if (typeof j?.detail === 'string' && j.detail) return j.detail
+  } catch { /* non-JSON body */ }
+  return `Request failed (HTTP ${r.status}).`
+}
+
 interface ItemsReply { items: Application[]; count: number }
 interface ItemReply { ok: boolean; item: Application }
 
@@ -162,6 +172,17 @@ export const applicationsApi = {
     const qs = params.toString()
     const res = await aget<ItemsReply>(qs ? `?${qs}` : '', { items: [], count: 0 })
     return res.items
+  },
+
+  // Like list(), but distinguishes "backend failed" (null) from "no applications" ([]).
+  listChecked: async (): Promise<Application[] | null> => {
+    try {
+      const r = await fetch('/api/applications')
+      if (!r.ok) return null
+      return ((await r.json()) as ItemsReply).items
+    } catch {
+      return null
+    }
   },
 
   get: (id: string): Promise<Application | null> =>
@@ -203,6 +224,23 @@ export const applicationsApi = {
     return res?.item ?? null
   },
 
+  // Like create(), but reports why it failed so the form can keep the user's input.
+  createChecked: async (
+    input: ApplicationCreateInput,
+  ): Promise<{ item: Application; error?: undefined } | { item: null; error: string }> => {
+    try {
+      const r = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!r.ok) return { item: null, error: await describeFailure(r) }
+      return { item: ((await r.json()) as ItemReply).item }
+    } catch {
+      return { item: null, error: 'Could not reach the backend. Is it running?' }
+    }
+  },
+
   update: async (id: string, input: ApplicationUpdateInput): Promise<Application | null> => {
     const res = await amutate<ItemReply | null>(`/${id}`, 'PATCH', input, null)
     return res?.item ?? null
@@ -231,10 +269,23 @@ export const applicationsApi = {
   },
 }
 
+// Whole calendar days from today (local) to a YYYY-MM-DD deadline. `new Date('YYYY-MM-DD')`
+// is UTC midnight, which skews the count by a day around local midnight, so build local dates.
+// Returns NaN for anything that is not a valid date.
+export function daysUntilDeadline(deadline: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(deadline)
+  if (!m) return Number.NaN
+  const now = new Date()
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  const due = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return Math.round((due - today) / 86_400_000)
+}
+
 // deadline urgency → status color bucket, used for the red-toned "due soon" cue
 export function deadlineTone(deadline: string | null): string | undefined {
   if (!deadline) return undefined
-  const days = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000)
+  const days = daysUntilDeadline(deadline)
+  if (Number.isNaN(days)) return undefined
   if (days < 7) return 'high' // maps to --color-fail via ui.tsx's stateColor
   if (days < 14) return 'medium'
   return undefined

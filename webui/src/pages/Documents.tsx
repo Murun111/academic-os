@@ -9,7 +9,7 @@ import {
   type DocumentStatus,
 } from '../lib/documentsApi'
 import { Btn, EmptyState, Mono, Panel, Pill, timeAgo } from '../components/ui'
-import { routinesApi } from '../lib/routinesApi'
+import { routinesApi, RoutinesApiError } from '../lib/routinesApi'
 import { useOs } from '../lib/store'
 import { stageConfig } from '../lib/stageConfig'
 import { RESUME_TEMPLATES, templatesFor, type ResumeTemplate } from '../lib/resumeTemplates'
@@ -45,16 +45,20 @@ export function Documents() {
     (t) => !cfg.resumeTemplates.includes(t.id),
   )
 
+  const loadSeq = useRef(0) // ignore responses from superseded requests
   const load = () => {
+    const seq = ++loadSeq.current
     setLoading(true)
     void documentsApi
-      .list({ kind: kindFilter === 'all' ? undefined : kindFilter, tag: tagFilter || undefined })
+      .listStrict({ kind: kindFilter === 'all' ? undefined : kindFilter, tag: tagFilter || undefined })
       .then((items) => {
+        if (seq !== loadSeq.current) return
         setDocuments(items)
         setError(false)
         setLoading(false)
       })
       .catch(() => {
+        if (seq !== loadSeq.current) return
         setError(true)
         setLoading(false)
       })
@@ -200,7 +204,7 @@ export function Documents() {
             className="w-[120px] bg-transparent text-[13.5px] text-hi outline-none placeholder:text-low"
           />
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {KIND_FILTERS.map((k) => (
             <button
               key={k}
@@ -242,7 +246,12 @@ export function Documents() {
               expanded={expandedId === doc.id}
               onToggle={() => setExpandedId(expandedId === doc.id ? null : doc.id)}
               onChanged={(updated) =>
-                setDocuments((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
+                setDocuments((prev) =>
+                  prev
+                    .map((d) => (d.id === updated.id ? updated : d))
+                    // a kind change must leave the row if it no longer matches the kind filter
+                    .filter((d) => kindFilter === 'all' || d.kind === kindFilter),
+                )
               }
             />
           ))}
@@ -270,52 +279,73 @@ function DocumentRow({
   const [feedback, setFeedback] = useState('')
   const [coachBusy, setCoachBusy] = useState(false)
   const [fileNote, setFileNote] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const [viewingVersion, setViewingVersion] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // two-click delete on attached files: first click arms per-filename, second deletes, auto-disarms after 3s
   const [confirmDeleteFile, setConfirmDeleteFile] = useState<string | null>(null)
   const fileConfirmTimer = useRef<number | null>(null)
 
-  useEffect(() => {
-    setTitle(doc.title)
-    setNotes(doc.notes)
-    setTagsInput(doc.tags.join(', '))
-    setContent(doc.content)
-  }, [doc.id, doc.title, doc.notes, doc.tags, doc.content])
+  // Each field re-syncs only when its OWN server value changes, so a save
+  // response for one field never wipes unsaved typing in another.
+  const tagsKey = doc.tags.join(', ')
+  useEffect(() => { setTitle(doc.title) }, [doc.id, doc.title])
+  useEffect(() => { setNotes(doc.notes) }, [doc.id, doc.notes])
+  useEffect(() => { setTagsInput(tagsKey) }, [doc.id, tagsKey])
+  useEffect(() => { setContent(doc.content) }, [doc.id, doc.content])
 
-  useEffect(() => () => { if (fileConfirmTimer.current) window.clearTimeout(fileConfirmTimer.current) }, [])
+  // Best-effort flush of an unsaved draft if the page unmounts (route change).
+  const latest = useRef({ id: doc.id, content, saved: doc.content })
+  latest.current = { id: doc.id, content, saved: doc.content }
+  useEffect(() => () => {
+    if (fileConfirmTimer.current) window.clearTimeout(fileConfirmTimer.current)
+    const l = latest.current
+    if (l.content !== l.saved) void documentsApi.update(l.id, { content: l.content })
+  }, [])
+
+  const persist = async (fields: Parameters<typeof documentsApi.update>[1]): Promise<boolean> => {
+    const res = await documentsApi.update(doc.id, fields)
+    if (res?.ok) {
+      setSaveError('')
+      onChanged(res.item)
+      return true
+    }
+    setSaveError('Not saved. Your text is still here; click away again or press Retry.')
+    return false
+  }
+
+  const retrySave = () => {
+    void saveTitle()
+    void saveNotes()
+    void saveTags()
+    void saveContent()
+  }
 
   const saveTitle = async () => {
     const trimmed = title.trim()
     if (!trimmed) { setTitle(doc.title); return }
     if (trimmed === doc.title) return
-    const res = await documentsApi.update(doc.id, { title: trimmed })
-    if (res?.ok) onChanged(res.item)
-    else setTitle(doc.title)
+    await persist({ title: trimmed })
   }
 
   const saveKind = async (kind: DocumentKind) => {
     if (kind === doc.kind) return
-    const res = await documentsApi.update(doc.id, { kind })
-    if (res?.ok) onChanged(res.item)
+    await persist({ kind })
   }
 
   const saveStatus = async (status: DocumentStatus) => {
     if (status === doc.status) return
-    const res = await documentsApi.update(doc.id, { status })
-    if (res?.ok) onChanged(res.item)
+    await persist({ status })
   }
 
   const saveNotes = async () => {
     if (notes === doc.notes) return
-    const res = await documentsApi.update(doc.id, { notes })
-    if (res?.ok) onChanged(res.item)
+    await persist({ notes })
   }
 
   const saveContent = async () => {
     if (content === doc.content) return
-    const res = await documentsApi.update(doc.id, { content })
-    if (res?.ok) {
-      onChanged(res.item)
+    if (await persist({ content })) {
       setContentSaved(true)
       setTimeout(() => setContentSaved(false), 1500)
     }
@@ -328,11 +358,22 @@ function DocumentRow({
     if (!content.trim()) return
     setCoachBusy(true)
     setFeedback('')
-    const f = isCv
-      ? await routinesApi.resumeFeedback(content, doc.title)
-      : await routinesApi.essayFeedback(content, doc.title)
-    setFeedback(f ? f.feedback : `The ${coachLabel} is offline — start the local AI in Settings.`)
-    setCoachBusy(false)
+    try {
+      // The document title is not the essay prompt, so no prompt_hint is sent for essays.
+      const f = isCv
+        ? await routinesApi.resumeFeedback(content, doc.title)
+        : await routinesApi.essayFeedback(content)
+      setFeedback(f.feedback)
+    } catch (e) {
+      const offline = !(e instanceof RoutinesApiError) || e.offline
+      setFeedback(
+        offline
+          ? `The ${coachLabel} is offline — start the local AI in Settings.`
+          : `The ${coachLabel} hit a problem: ${(e as Error).message}`,
+      )
+    } finally {
+      setCoachBusy(false)
+    }
   }
 
   const uploadFile = async (f: File) => {
@@ -349,6 +390,7 @@ function DocumentRow({
   const removeFile = async (name: string) => {
     const res = await documentsApi.deleteFile(doc.id, name)
     if (res?.ok) onChanged(res.item)
+    else setFileNote('Could not remove the file. Try again.')
   }
 
   const clickRemoveFile = (name: string) => {
@@ -372,8 +414,7 @@ function DocumentRow({
   const saveTags = async () => {
     const tags = tagsInput.split(',').map((t) => t.trim()).filter(Boolean)
     if (JSON.stringify(tags) === JSON.stringify(doc.tags)) return
-    const res = await documentsApi.update(doc.id, { tags })
-    if (res?.ok) onChanged(res.item)
+    await persist({ tags })
   }
 
   const submitVersion = async () => {
@@ -446,12 +487,18 @@ function DocumentRow({
           <div className="mb-1.5 flex items-center justify-between">
             <p className="label-mono">{isCv ? 'the resume itself' : 'the essay itself'}</p>
             {contentSaved && <Mono className="text-acc">saved</Mono>}
+            {saveError && (
+              <span role="alert" className="flex items-center gap-2 text-[12px] text-fail">
+                {saveError}
+                <button type="button" onClick={retrySave} className="underline hover:text-hi">Retry</button>
+              </span>
+            )}
           </div>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onBlur={() => void saveContent()}
-            placeholder="Write here — drafts save automatically and stay on this computer. Use 'Save version' below to snapshot a draft before big edits."
+            placeholder="Write here — drafts save automatically and stay on this computer. Use '+ New version' below to snapshot a draft before big edits."
             rows={content.trim() ? Math.min(24, Math.max(8, content.split('\n').length + 2)) : 6}
             className="mb-2 w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2.5 text-[13.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-ink/25"
           />
@@ -480,10 +527,35 @@ function DocumentRow({
           ) : (
             <div className="mb-4 flex flex-col gap-1.5">
               {[...doc.history].reverse().map((h) => (
-                <div key={h.version} className="flex items-center gap-2.5 text-[12.5px]">
-                  <Mono className="w-[36px] text-low">v{h.version}</Mono>
-                  <span className="flex-1 text-mid">{h.note}</span>
-                  <Mono className="text-low">{timeAgo(h.at)}</Mono>
+                <div key={h.version} className="text-[12.5px]">
+                  <div className="flex items-center gap-2.5">
+                    <Mono className="w-[36px] text-low">v{h.version}</Mono>
+                    <span className="flex-1 text-mid">{h.note}</span>
+                    {h.content ? (
+                      <button
+                        type="button"
+                        onClick={() => setViewingVersion(viewingVersion === h.version ? null : h.version)}
+                        className="text-low hover:text-hi"
+                      >
+                        {viewingVersion === h.version ? 'Hide' : 'View'}
+                      </button>
+                    ) : null}
+                    <Mono className="text-low">{timeAgo(h.at)}</Mono>
+                  </div>
+                  {viewingVersion === h.version && h.content && (
+                    <div className="mt-1.5 rounded-lg border border-hairline bg-raise2 px-3 py-2">
+                      <p className="max-h-[240px] overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed text-mid">
+                        {h.content}
+                      </p>
+                      <Btn
+                        kind="quiet"
+                        className="mt-1.5"
+                        onClick={() => void persist({ content: h.content }).then((ok) => { if (ok) setViewingVersion(null) })}
+                      >
+                        Restore this text
+                      </Btn>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

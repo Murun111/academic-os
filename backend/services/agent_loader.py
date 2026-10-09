@@ -29,6 +29,7 @@ exactly the tools the agent's prompt actually calls.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -40,6 +41,9 @@ from backend.markdown_parser import parse_frontmatter
 DEFAULT_MODEL = "ollama:gemma4:latest"
 DEFAULT_TIMEOUT_SECONDS = 60
 VALID_TRIGGERS = {"on_vault_event", "manual"}
+
+
+log = logging.getLogger(__name__)
 
 
 class AgentLoaderError(Exception):
@@ -99,17 +103,28 @@ class AgentLoader:
         for path in sorted(self.agents_dir.glob("*.md")):
             # Skip non-agent files (README, etc.) — they have no frontmatter
             # OR have type != agent in frontmatter.
-            spec = self._parse_file(path)
+            try:
+                spec = self._parse_file(path)
+            except (AgentLoaderError, OSError, UnicodeDecodeError) as e:
+                # One malformed spec must not take down the listing, the
+                # scheduler rescan, or backend startup.
+                log.warning("skipping invalid agent file %s: %s", path.name, e)
+                continue
             if spec is not None:
                 out.append(spec)
         return out
 
     def get(self, name: str) -> Optional[AgentSpec]:
         """Return a single agent spec by name, or None if not found."""
-        path = self.agents_dir / f"{name}.md"
-        if not path.exists():
-            return None
-        return self._parse_file(path)
+        if name and "/" not in name and "\\" not in name and ".." not in name:
+            path = self.agents_dir / f"{name}.md"
+            if path.exists():
+                return self._parse_file(path)
+        # Fall back to the frontmatter display name (may differ from filename).
+        for spec in self.list_all():
+            if spec.name == name:
+                return spec
+        return None
 
     def _parse_file(self, path: Path) -> Optional[AgentSpec]:
         """Parse a single agent definition file. Returns None for non-agent files."""

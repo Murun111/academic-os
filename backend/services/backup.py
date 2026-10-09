@@ -60,6 +60,16 @@ def set_path(path: str) -> dict:
     path = (path or "").strip()
     if path:
         target = Path(path).expanduser()
+        if not target.is_absolute():
+            # A relative path would resolve against the server's CWD, which in
+            # the packaged app is inside the .app bundle (replaced on update).
+            return {"error": "backup folder must be an absolute path (e.g. /Users/you/Documents/Backups)"}
+        resolved = target.resolve()
+        root = _root().resolve()
+        if resolved == root or resolved.is_relative_to(root):
+            return {"error": "backup folder cannot be inside the app's data folder"}
+        if root.is_relative_to(resolved / "AcademicOS-Backup"):
+            return {"error": "backup folder cannot contain the app's data folder"}
         try:
             target.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -82,6 +92,35 @@ def _copytree_excluding(src: Path, dst: Path, exclude: set[str]) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_ignore)
 
 
+def _prune_mirror(dest: Path, root: Path) -> int:
+    """Make the mirror a true mirror: delete backup files whose live
+    counterpart is gone (forgotten memory, deleted documents/threads), so
+    they don't linger in the cloud-synced folder and come back on restore.
+    Only subdirs that still exist live are pruned; data/connectors is outside
+    the mirrored set (_mirrored_files skips it) and is never touched."""
+    removed = 0
+    live = _mirrored_files(root)
+    for rel, p in _mirrored_files(dest).items():
+        if rel.split("/", 1)[0] not in _SUBDIRS or not (root / rel.split("/", 1)[0]).exists():
+            continue
+        if rel not in live:
+            p.unlink(missing_ok=True)
+            removed += 1
+    for sub in _SUBDIRS:
+        sub_dir = dest / sub
+        if not sub_dir.is_dir():
+            continue
+        for d in sorted((x for x in sub_dir.rglob("*") if x.is_dir() and not x.is_symlink()),
+                        key=lambda x: len(x.parts), reverse=True):
+            if d.relative_to(dest).parts[:2] == ("data", "connectors"):
+                continue
+            try:
+                d.rmdir()  # only succeeds when empty
+            except OSError:
+                pass
+    return removed
+
+
 def run_backup() -> dict:
     """Mirror data/, notes/, agents/ into <path>/AcademicOS-Backup."""
     cfg = config()
@@ -102,6 +141,7 @@ def run_backup() -> dict:
             else:
                 shutil.copytree(src, dest / sub, dirs_exist_ok=True)
             copied += 1
+        _prune_mirror(dest, root)
         cfg["last_backup"] = datetime.now().isoformat(timespec="seconds")
         _save(cfg)
         return {"ok": True, "dest": str(dest), "last_backup": cfg["last_backup"]}
@@ -187,6 +227,9 @@ def _prune_snapshots(snap_root: Path, keep: int = 3) -> None:
     snapshots = sorted((p for p in snap_root.iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True)
     for old in snapshots[keep:]:
         shutil.rmtree(old, ignore_errors=True)
+    # Snapshots taken by older builds may hold credentials: scrub them.
+    for kept in snapshots[:keep]:
+        shutil.rmtree(kept / "data" / "connectors", ignore_errors=True)
 
 
 def preview_restore() -> dict:
@@ -227,7 +270,13 @@ def run_restore() -> dict:
         for sub in _SUBDIRS:
             src = root / sub
             if src.exists():
-                shutil.copytree(src, snap_dir / sub, dirs_exist_ok=True)
+                if sub == "data":
+                    # Restore never touches data/connectors, so snapshotting it
+                    # would only copy the Canvas token / ICS URLs outside the
+                    # credential fence (and past "Forget credentials").
+                    _copytree_excluding(src, snap_dir / sub, _EXCLUDE_FROM_DATA)
+                else:
+                    shutil.copytree(src, snap_dir / sub, dirs_exist_ok=True)
         _prune_snapshots(snap_root)
 
         add, overwrite, delete = _diff_backup_live(dest, root)

@@ -246,3 +246,29 @@ def test_trigger_path_exact_match_when_no_trailing_slash(spec_dir, mock_runner):
 
     assert "p" in engine.match({"path": "CLAUDE.md", "kind": "modified"})
     assert engine.match({"path": "CLAUDE.md.bak", "kind": "modified"}) == []
+
+
+def test_fire_runs_on_the_server_loop_when_available():
+    """F89: cron runs share the server loop's httpx client; never asyncio.run()
+    a second loop when the server loop is running."""
+    import asyncio
+    import threading
+    from backend.services.scheduler import AgentScheduler
+
+    seen = {}
+
+    class _Runner:
+        async def run(self, name, trigger=None):
+            seen["loop"] = asyncio.get_running_loop()
+
+    sched = AgentScheduler.__new__(AgentScheduler)
+    sched.runner = _Runner()
+
+    async def main():
+        sched._loop = asyncio.get_running_loop()
+        t = threading.Thread(target=sched._fire, args=("a",))
+        t.start()
+        await asyncio.to_thread(t.join, 5)
+        assert seen["loop"] is asyncio.get_running_loop()
+
+    asyncio.run(main())

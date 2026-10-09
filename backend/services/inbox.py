@@ -16,7 +16,9 @@ configured Reminders list.
 from __future__ import annotations
 
 import json
+import functools
 import os
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
@@ -35,6 +37,20 @@ else:
 
 PRIORITIES = ("low", "normal", "high")
 STATUSES = ("open", "done", "snoozed")
+
+
+# One process-wide lock for every mutation: sync routes run in the threadpool
+# while agent tools run on the event loop, and update/delete rewrite the whole
+# file, which would otherwise drop a concurrent add()'s appended line.
+_MUTATION_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        with _MUTATION_LOCK:
+            return fn(*a, **kw)
+    return wrapper
 
 
 class InboxServiceError(Exception):
@@ -131,6 +147,7 @@ class InboxService:
 
     # === CRUD ===
 
+    @_locked
     def add(
         self,
         text: str,
@@ -175,6 +192,7 @@ class InboxService:
                 return i
         raise InboxServiceError(f"item {item_id!r} not found")
 
+    @_locked
     def update(
         self,
         item_id: str,
@@ -209,6 +227,7 @@ class InboxService:
                 return it
         raise InboxServiceError(f"item {item_id!r} not found")
 
+    @_locked
     def mark_done(self, item_id: str) -> InboxItem:
         items = self._read_all()
         for it in items:
@@ -219,6 +238,7 @@ class InboxService:
                 return it
         raise InboxServiceError(f"item {item_id!r} not found")
 
+    @_locked
     def reopen(self, item_id: str) -> InboxItem:
         items = self._read_all()
         for it in items:
@@ -229,6 +249,7 @@ class InboxService:
                 return it
         raise InboxServiceError(f"item {item_id!r} not found")
 
+    @_locked
     def delete(self, item_id: str) -> None:
         items = self._read_all()
         new_items = [i for i in items if i.id != item_id]

@@ -12,17 +12,19 @@ export interface Profile {
   reminders: boolean
 }
 
-const EMPTY: Profile = { stage: null, name: '', track: null, test_date: '', reminders: true }
 const BASE = '/api/profile'
 
 export const profileApi = {
-  get: async (): Promise<Profile> => {
+  /** The saved profile, or null when it could not be read (backend starting,
+   *  5xx, bad JSON). null must never be treated as "first run": only a
+   *  successful read with stage null means a new user. */
+  get: async (): Promise<Profile | null> => {
     try {
       const res = await fetch(BASE)
-      if (!res.ok) return EMPTY
+      if (!res.ok) return null
       return (await res.json()) as Profile
     } catch {
-      return EMPTY
+      return null
     }
   },
 

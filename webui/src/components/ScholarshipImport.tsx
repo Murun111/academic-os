@@ -135,6 +135,11 @@ export function ScholarshipImport({ onDone }: { onDone: () => void }) {
             ) : (
               <EmptyState title="No new rows to import" hint="Everything was a duplicate or had errors." />
             )}
+            {(preview.warnings?.length ?? 0) > 0 && (
+              <ul className="space-y-0.5 text-[12px] text-mid">
+                {preview.warnings?.map((w, i) => <li key={i}>{w.message}</li>)}
+              </ul>
+            )}
             {preview.errors.length > 0 && (
               <ul className="space-y-0.5 text-[12px] text-fail">
                 {preview.errors.map((e, i) => <li key={i}>Row {e.row}: {e.message}</li>)}

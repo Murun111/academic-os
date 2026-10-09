@@ -13,7 +13,8 @@ export interface OsApi {
   runs(): Promise<Run[]>
   runAgent(name: string): Promise<void>
   approvals(): Promise<Approval[]>
-  decide(id: string, approve: boolean): Promise<void>
+  /** Resolves to a human-readable failure message when an approved action did not run, else null. */
+  decide(id: string, approve: boolean): Promise<string | null>
   events(onEvent: (e: OsEvent) => void): () => void
   seedEvents(): Promise<OsEvent[]>
   memories(q?: string): Promise<MemoryEntry[]>
@@ -44,6 +45,7 @@ const mockApi: OsApi = {
     await delay(150)
     const i = mock.approvals.findIndex((a) => a.id === id)
     if (i >= 0) mock.approvals.splice(i, 1)
+    return null
   },
   events(onEvent) {
     // the heartbeat of mock mode: a new event every few seconds,
@@ -107,7 +109,16 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!r.ok) throw new Error(`${path} → ${r.status}`)
+  if (!r.ok) {
+    // surface the server's own explanation (FastAPI `detail` / `error`) when it sent one
+    let detail = ''
+    try {
+      const j = await r.json()
+      const d = j?.detail ?? j?.error
+      detail = typeof d === 'string' ? d : d ? JSON.stringify(d) : ''
+    } catch { /* non-JSON error body */ }
+    throw new Error(detail || `${path} → ${r.status}`)
+  }
   return r.json()
 }
 
@@ -185,8 +196,13 @@ function runSteps(r: any): TraceStep[] {
   return steps
 }
 
+// Tools the backend treats as most dangerous: never let the name heuristic call them "low".
+const HIGH_RISK_TOOLS = new Set(['autonomy.allow', 'code.task', 'loop.set_schedule'])
+
 function riskOf(tool: string): Risk {
   const t = tool.toLowerCase()
+  if (HIGH_RISK_TOOLS.has(t)) return 'high'
+  if (t === 'academics.add_application') return 'medium'
   if (/delete|remove|\brm\b|send|email|pay|money|transfer|push|deploy|write/.test(t)) return 'high'
   if (/schedule|update|edit|create|move|set_/.test(t)) return 'medium'
   return 'low'
@@ -215,6 +231,16 @@ function timeToIso(hhmm: string): string {
   const d = new Date()
   d.setHours(Number(m[1]), Number(m[2]), 0, 0)
   return d.toISOString()
+}
+
+// Prefer the backend's full timestamp so a 3-day-old run isn't shown as "3h".
+// Only builds that predate `iso` fall back to pinning HH:MM onto today.
+function activityIso(it: any): string {
+  if (typeof it?.iso === 'string' && it.iso) {
+    const d = new Date(it.iso)
+    if (!isNaN(+d)) return d.toISOString()
+  }
+  return timeToIso(it?.time || '')
 }
 
 function mapEvent(raw: any): OsEvent | null {
@@ -344,7 +370,15 @@ const realApi: OsApi = {
   },
 
   async decide(id, approve) {
-    await postSafe('/approvals/decide', { item_id: id, decision: approve ? 'approved' : 'dismissed' })
+    const res = await postSafe('/approvals/decide', { item_id: id, decision: approve ? 'approved' : 'dismissed' })
+    if (res?.error && !res?.decision) return String(res.error)
+    const ex = res?.exec_result
+    if (approve && ex && ex.executed === false) {
+      return ex.failed
+        ? `Approved, but the action failed: ${ex.reason}. It stays in the queue so you can retry.`
+        : `Approved, but nothing was run: ${ex.reason}`
+    }
+    return null
   },
 
   events(onEvent) {
@@ -367,7 +401,7 @@ const realApi: OsApi = {
     const kindMap: Record<string, EventKind> = { run: 'agent', code: 'agent', cos: 'system', brief: 'system' }
     return (res.items || []).map((it: any): OsEvent => ({
       id: evId(),
-      t: timeToIso(it.time || ''),
+      t: activityIso(it),
       kind: kindMap[it.kind] || 'system',
       agent: it.kind === 'run' ? String(it.label || '').toLowerCase() : undefined,
       message: `${it.label || ''}${it.sub ? ` · ${it.sub}` : ''}`.trim(),
@@ -391,7 +425,7 @@ const realApi: OsApi = {
   // fill in via thread() when one is opened — 20 threads used to mean 21 GETs.
   async threads() {
     const res = await tryGet<any>('/llms/history', { threads: [] })
-    return (res.threads || []).slice(0, 20).map((s: any): ChatThread => ({
+    return (res.threads || []).map((s: any): ChatThread => ({
       id: s.id,
       title: s.title || '(untitled)',
       model: s.model || '',

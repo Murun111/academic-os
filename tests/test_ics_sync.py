@@ -36,7 +36,20 @@ END:VCALENDAR
 
 # ── parser ────────────────────────────────────────────────────────
 
-def test_parse_ics_extracts_events():
+@pytest.fixture
+def tz(monkeypatch):
+    import time
+
+    def _set(name):
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+    yield _set
+    monkeypatch.delenv("TZ", raising=False)
+    time.tzset()
+
+
+def test_parse_ics_extracts_events(tz):
+    tz("UTC")
     events = parse_ics(SAMPLE_ICS)
     assert len(events) == 3  # the UID-less one is skipped
     assert events[0].uid == "event-assignment-1@canvas"
@@ -160,3 +173,85 @@ def test_router_sync_without_feeds_400(client):
 
 def test_router_rejects_non_url(client):
     assert client.post("/api/connectors/ics", json={"url": "not a url"}).status_code == 422
+
+
+def test_parse_ics_converts_to_local_date(tz):
+    tz("America/New_York")
+    text = (
+        "BEGIN:VEVENT\nUID:a\nSUMMARY:Utc [C]\nDTSTART:20260916T035900Z\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nUID:b\nSUMMARY:Zoned [C]\nDTSTART;TZID=America/Chicago:20260915T235900\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nUID:c\nSUMMARY:AllDay [C]\nDTSTART;VALUE=DATE:20260916\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nUID:d\nSUMMARY:Float [C]\nDTSTART:20260916T010000\nEND:VEVENT\n"
+    )
+    by = {e.uid: e.due for e in parse_ics(text)}
+    assert by["a"] == "2026-09-15"   # 11:59pm Eastern, not the 16th
+    assert by["b"] == "2026-09-16"   # 23:59 Chicago = 00:59 Eastern next day
+    assert by["c"] == "2026-09-16"   # all-day keeps its calendar date
+    assert by["d"] == "2026-09-16"   # floating keeps its date
+
+
+DUP_UID_ICS = """BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:same
+DTSTART;VALUE=DATE:20261101
+SUMMARY:Seminar [BIO 1]
+END:VEVENT
+BEGIN:VEVENT
+UID:same
+DTSTART;VALUE=DATE:20261102
+SUMMARY:Seminar [BIO 1]
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+@pytest.mark.asyncio
+async def test_same_uid_events_are_stable_across_syncs(services, monkeypatch):
+    ics, courses = services
+
+    class DupClient(FakeClient):
+        async def get(self, url, *a, **kw): return FakeResponse(DUP_UID_ICS)
+
+    monkeypatch.setattr("backend.services.ics_sync.httpx.AsyncClient", DupClient)
+    first = await ics.sync(courses)
+    assert first["created"] == 2
+    second = await ics.sync(courses)
+    assert second["created"] == 0 and second["updated"] == 0 and second["unchanged"] == 2
+    assert sorted(a.due for a in courses.list_assignments()) == ["2026-11-01", "2026-11-02"]
+
+
+@pytest.mark.asyncio
+async def test_ics_skips_events_for_canvas_synced_course(services):
+    ics, courses = services
+    courses.add_course(name="MATH 201", term="Fall", source="canvas", external_id="canvas-1")
+    result = await ics.sync(courses)
+    assert result["skipped_canvas"] == 1
+    assert all(c.source != "ics" or c.name != "MATH 201" for c in courses.list_courses())
+    assert not [a for a in courses.list_assignments() if a.title == "Problem Set 3"]
+
+
+@pytest.mark.asyncio
+async def test_http_error_does_not_leak_feed_url(tmp_path, monkeypatch):
+    import httpx
+
+    secret = "https://canvas.example.edu/feeds/calendars/user_SECRETTOKEN123.ics"
+    monkeypatch.setattr("backend.services.websearch.socket.getaddrinfo", _resolve_public)
+
+    class C401(FakeClient):
+        async def get(self, url, *a, **kw):
+            req = httpx.Request("GET", url)
+            resp = httpx.Response(401, request=req)
+            class R:
+                is_redirect = False
+                def raise_for_status(self_inner):
+                    raise httpx.HTTPStatusError("Client error for url " + url, request=req, response=resp)
+            return R()
+
+    monkeypatch.setattr("backend.services.ics_sync.httpx.AsyncClient", C401)
+    ics = IcsSyncService(data_dir=tmp_path / "connectors")
+    courses = CoursesService(data_dir=tmp_path / "courses")
+    ics.add_feed(secret)
+    result = await ics.sync(courses)
+    assert result["errors"][0]["error"] == "HTTP 401"
+    assert "SECRETTOKEN123" not in str(result)
+    assert "SECRETTOKEN123" not in str(ics.masked_config())

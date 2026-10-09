@@ -34,13 +34,16 @@ export function StageSetup() {
 
   // onboarding just finished → start the guided tour (once, ever)
   const maybeStartTour = () => {
-    if (!localStorage.getItem(TOUR_DONE_KEY)) setTour(true)
+    let done = false
+    try { done = !!localStorage.getItem(TOUR_DONE_KEY) } catch { /* storage blocked: just show the tour */ }
+    if (!done) setTour(true)
   }
 
   const pickStage = async (key: Stage) => {
     const wasFirstRun = firstRun
-    await setStage(key)
-    if (wasFirstRun) {
+    const saved = await setStage(key)
+    // a failed save rolled the stage back (and toasted): stay on the picker
+    if (saved && wasFirstRun) {
       if (trackApplies(key)) setAskTrack(true)
       else maybeStartTour()
     }

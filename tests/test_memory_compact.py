@@ -26,7 +26,7 @@ from backend.services.memory_types import MemoryItem
 from backend.services.memory_writer import _make_bullet
 
 
-_MEM = "Agentic OS/memory"
+_MEM = "notes/memory"
 
 
 @pytest.fixture(autouse=True)

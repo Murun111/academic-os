@@ -1,7 +1,7 @@
 // Agent Routines client — deadline watcher + essay feedback, both on-demand
 // endpoints under /api/routines/*. Self-contained: no imports from the shared
-// lib/types.ts. Every call degrades to a safe default so the page stays calm
-// if the backend or the local model is unreachable.
+// lib/types.ts. The catalog degrades to empty; digest and LLM calls throw so
+// pages can tell "nothing there" apart from "it failed".
 
 export interface RoutineCatalogEntry {
   id: string
@@ -60,26 +60,39 @@ async function rget<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-// Returns null on 503 (model offline) so callers can show the inline
-// "Local model offline" state instead of a generic error.
-async function rpostLlm<T>(path: string, body: unknown): Promise<T | null> {
+// Throws RoutinesApiError: offline=true for 503 / unreachable backend (show
+// the "set up the local AI" note), offline=false for any other failure (the
+// model answered badly, timed out, or the input was rejected).
+async function rpostLlm<T>(path: string, body: unknown): Promise<T> {
+  let r: Response
   try {
-    const r = await fetch(`/api/routines${path}`, {
+    r = await fetch(`/api/routines${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!r.ok) return null
-    return (await r.json()) as T
   } catch {
-    return null
+    throw new RoutinesApiError('Could not reach the app backend.', true)
   }
+  if (!r.ok) {
+    let detail = ''
+    try {
+      const j = (await r.json()) as { detail?: unknown }
+      if (typeof j.detail === 'string') detail = j.detail
+    } catch { /* non-JSON error body */ }
+    throw new RoutinesApiError(detail || `Request failed (${r.status}).`, r.status === 503)
+  }
+  return (await r.json()) as T
 }
 
 export const routinesApi = {
   catalog: () => rget<RoutineCatalog>('/catalog', { routines: [] }),
-  deadlineDigest: (days = 14) =>
-    rget<DeadlineDigest>(`/deadline-digest?days=${days}`, { items: [], summary: '' }),
+  // Throws on failure: an empty digest must mean "nothing due", never "fetch failed".
+  deadlineDigest: async (days = 14): Promise<DeadlineDigest> => {
+    const r = await fetch(`/api/routines/deadline-digest?days=${days}`)
+    if (!r.ok) throw new Error(`deadline digest failed: ${r.status}`)
+    return (await r.json()) as DeadlineDigest
+  },
   deadlineDigestBrief: (days = 14) =>
     rpostLlm<DeadlineDigestBriefing>('/deadline-digest/brief', { days }),
   essayFeedback: (text: string, promptHint = '') =>

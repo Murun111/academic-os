@@ -26,6 +26,7 @@ Why two separate components:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -35,6 +36,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from backend.services.agent_loader import AgentLoader, AgentSpec
 from backend.services.agent_runner import AgentRunner, AgentRunnerError
+
+log = logging.getLogger(__name__)
 
 
 # === TriggerDedupe ===
@@ -92,10 +95,18 @@ class AgentScheduler:
         self.runner = runner
         self._sched = BackgroundScheduler(daemon=True)
         self._started = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def start(self) -> None:
         if self._started:
             return
+        # Remember the server loop: the runner shares one httpx.AsyncClient
+        # (bound to this loop), so cron runs must execute on it, not on a
+        # throwaway asyncio.run() loop in the APScheduler thread.
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         self.rescan()
         self._sched.start()
         self._started = True
@@ -108,19 +119,24 @@ class AgentScheduler:
 
     def rescan(self) -> None:
         """Re-read agent specs and register/unregister cron jobs accordingly."""
-        # Remove all existing jobs we own
-        for job in list(self._sched.get_jobs()):
-            self._sched.remove_job(job.id)
-        # Re-register
-        for spec in self.agent_loader.list_all():
+        # Build the new job set first so a failure never leaves us with no jobs.
+        planned = []
+        try:
+            specs = self.agent_loader.list_all()
+        except Exception as e:  # never crash startup/rescan on a bad spec dir
+            log.warning("scheduler rescan: could not list agents: %r", e)
+            return
+        for spec in specs:
             if not spec.enabled or not spec.schedule:
                 continue
             try:
                 trigger = CronTrigger.from_crontab(spec.schedule)
-            except (ValueError, TypeError) as e:
-                # Spec was already validated at load; if we get here, log
-                # and skip. Don't crash the scheduler.
+            except (ValueError, TypeError):
                 continue
+            planned.append((spec, trigger))
+        for job in list(self._sched.get_jobs()):
+            self._sched.remove_job(job.id)
+        for spec, trigger in planned:
             self._sched.add_job(
                 self._fire,
                 trigger=trigger,
@@ -132,7 +148,13 @@ class AgentScheduler:
 
     def _fire(self, agent_name: str) -> None:
         """Called by APScheduler in its own thread when a cron tick matches."""
-        asyncio.run(self.runner.run(agent_name, trigger="cron"))
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.runner.run(agent_name, trigger="cron"), loop
+            ).result()
+        else:  # no server loop (tests / standalone use)
+            asyncio.run(self.runner.run(agent_name, trigger="cron"))
 
     def job_count(self) -> int:
         return len(self._sched.get_jobs())

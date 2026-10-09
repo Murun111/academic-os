@@ -10,7 +10,11 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
+import os
 import re
+import tempfile
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -68,13 +72,20 @@ class ApplicationsService:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._path = self.data_dir / "items.jsonl"
+        # Sync handlers run in a threadpool: serialize every read-modify-write.
+        self._lock = threading.RLock()
 
     # === internal I/O ===
 
     def _read_all(self) -> list[Application]:
+        return self._read_lines()[0]
+
+    def _read_lines(self) -> tuple[list[Application], list[str]]:
+        """Parsed items plus the raw text of every unparseable line (kept on rewrite)."""
         if not self._path.exists():
-            return []
+            return [], []
         items: list[Application] = []
+        bad: list[str] = []
         with self._path.open() as f:
             for line in f:
                 line = line.strip()
@@ -84,18 +95,31 @@ class ApplicationsService:
                     d = json.loads(line)
                     items.append(Application.from_dict(d))
                 except (json.JSONDecodeError, TypeError) as e:
-                    # Skip malformed lines silently — same policy as inbox.
-                    print(f"[applications] skipping malformed line: {e!r}")
-                    continue
-        return items
+                    print(f"[applications] malformed line preserved: {e!r}")
+                    bad.append(line)
+        return items, bad
 
     def _write_all(self, items: list[Application]) -> None:
-        """Atomic rewrite — write to .tmp, rename over the real file."""
-        tmp = self._path.with_suffix(".jsonl.tmp")
-        with tmp.open("w") as f:
-            for it in items:
-                f.write(json.dumps(it.to_dict(), separators=(",", ":")) + "\n")
-        tmp.replace(self._path)
+        """Atomic rewrite via a unique tmp file. Unparseable lines are carried over
+        verbatim so a rewrite never destroys data the app could not read."""
+        with self._lock:
+            _, bad = self._read_lines()
+            fd, tmp_name = tempfile.mkstemp(
+                dir=str(self.data_dir), prefix="items.", suffix=".jsonl.tmp"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    for it in items:
+                        f.write(json.dumps(it.to_dict(), separators=(",", ":")) + "\n")
+                    for line in bad:
+                        f.write(line + "\n")
+                os.replace(tmp_name, self._path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
 
     def _new_id(self) -> str:
         return uuid.uuid4().hex[:12]
@@ -138,9 +162,23 @@ class ApplicationsService:
             amount = float(value)
         except (TypeError, ValueError):
             raise ValueError(f"{field_name} must be a number")
+        if not math.isfinite(amount):
+            raise ValueError(f"{field_name} must be a finite number")
         if amount < 0:
             raise ValueError(f"{field_name} must be >= 0")
         return amount
+
+    def _validate_deadline(self, value) -> Optional[str]:
+        """YYYY-MM-DD or empty/None (cleared)."""
+        if value is None:
+            return None
+        v = str(value).strip()
+        if not v:
+            return None
+        try:
+            return date.fromisoformat(v).isoformat()
+        except ValueError:
+            raise ValueError("deadline must be a date in YYYY-MM-DD format")
 
     def _normalize_requirement(self, r: dict) -> dict:
         return {
@@ -177,6 +215,7 @@ class ApplicationsService:
         requirements = [self._normalize_requirement(r) for r in (fields.get("requirements") or [])]
         amount = self._validate_amount(fields.get("amount"), "amount")
         app_fee = self._validate_amount(fields.get("app_fee"), "app_fee")
+        deadline = self._validate_deadline(fields.get("deadline"))
         now = self._now_iso()
         item = Application(
             id=self._new_id(),
@@ -185,7 +224,7 @@ class ApplicationsService:
             type=type_,
             status=status,
             decision_result=decision_result,
-            deadline=fields.get("deadline"),
+            deadline=deadline,
             url=fields.get("url") or "",
             notes=fields.get("notes") or "",
             requirements=requirements,
@@ -199,11 +238,23 @@ class ApplicationsService:
             created_at=now,
             updated_at=now,
         )
-        with self._path.open("a") as f:
-            f.write(json.dumps(item.to_dict(), separators=(",", ":")) + "\n")
+        line = json.dumps(item.to_dict(), separators=(",", ":")) + "\n"
+        with self._lock:
+            prefix = ""
+            if self._path.exists() and self._path.stat().st_size > 0:
+                with self._path.open("rb") as rf:
+                    rf.seek(-1, os.SEEK_END)
+                    if rf.read(1) != b"\n":
+                        prefix = "\n"  # last line was cut off; don't glue onto it
+            with self._path.open("a") as f:
+                f.write(prefix + line)
         return item
 
     def update(self, app_id: str, **fields) -> Application:
+        with self._lock:
+            return self._update_locked(app_id, **fields)
+
+    def _update_locked(self, app_id: str, **fields) -> Application:
         items = self._read_all()
         for it in items:
             if it.id == app_id:
@@ -217,8 +268,8 @@ class ApplicationsService:
                     it.status = self._validate_status(fields["status"])
                 if fields.get("decision_result") is not None:
                     it.decision_result = self._validate_decision_result(fields["decision_result"])
-                if "deadline" in fields and fields["deadline"] is not None:
-                    it.deadline = fields["deadline"]
+                if "deadline" in fields:
+                    it.deadline = self._validate_deadline(fields["deadline"])
                 if fields.get("url") is not None:
                     it.url = fields["url"]
                 if fields.get("notes") is not None:
@@ -247,55 +298,59 @@ class ApplicationsService:
         raise KeyError(app_id)
 
     def delete(self, app_id: str) -> None:
-        items = self._read_all()
-        new_items = [i for i in items if i.id != app_id]
-        if len(new_items) == len(items):
-            raise KeyError(app_id)
-        self._write_all(new_items)
+        with self._lock:
+            items = self._read_all()
+            new_items = [i for i in items if i.id != app_id]
+            if len(new_items) == len(items):
+                raise KeyError(app_id)
+            self._write_all(new_items)
 
     # === requirements ===
 
     def add_requirement(self, app_id: str, label: str) -> Application:
-        items = self._read_all()
-        for it in items:
-            if it.id == app_id:
-                label = (label or "").strip()
-                if not label:
-                    raise ValueError("label is required and cannot be empty")
-                it.requirements.append({"id": self._new_id(), "label": label, "done": False})
-                it.updated_at = self._now_iso()
-                self._write_all(items)
-                return it
-        raise KeyError(app_id)
+        with self._lock:
+            items = self._read_all()
+            for it in items:
+                if it.id == app_id:
+                    label = (label or "").strip()
+                    if not label:
+                        raise ValueError("label is required and cannot be empty")
+                    it.requirements.append({"id": self._new_id(), "label": label, "done": False})
+                    it.updated_at = self._now_iso()
+                    self._write_all(items)
+                    return it
+            raise KeyError(app_id)
 
     def update_requirement(self, app_id: str, req_id: str, **fields) -> Application:
-        items = self._read_all()
-        for it in items:
-            if it.id == app_id:
-                for r in it.requirements:
-                    if r["id"] == req_id:
-                        if fields.get("label") is not None:
-                            r["label"] = str(fields["label"]).strip()
-                        if fields.get("done") is not None:
-                            r["done"] = bool(fields["done"])
-                        it.updated_at = self._now_iso()
-                        self._write_all(items)
-                        return it
-                raise KeyError(req_id)
-        raise KeyError(app_id)
+        with self._lock:
+            items = self._read_all()
+            for it in items:
+                if it.id == app_id:
+                    for r in it.requirements:
+                        if r["id"] == req_id:
+                            if fields.get("label") is not None:
+                                r["label"] = str(fields["label"]).strip()
+                            if fields.get("done") is not None:
+                                r["done"] = bool(fields["done"])
+                            it.updated_at = self._now_iso()
+                            self._write_all(items)
+                            return it
+                    raise KeyError(req_id)
+            raise KeyError(app_id)
 
     def delete_requirement(self, app_id: str, req_id: str) -> Application:
-        items = self._read_all()
-        for it in items:
-            if it.id == app_id:
-                new_reqs = [r for r in it.requirements if r["id"] != req_id]
-                if len(new_reqs) == len(it.requirements):
-                    raise KeyError(req_id)
-                it.requirements = new_reqs
-                it.updated_at = self._now_iso()
-                self._write_all(items)
-                return it
-        raise KeyError(app_id)
+        with self._lock:
+            items = self._read_all()
+            for it in items:
+                if it.id == app_id:
+                    new_reqs = [r for r in it.requirements if r["id"] != req_id]
+                    if len(new_reqs) == len(it.requirements):
+                        raise KeyError(req_id)
+                    it.requirements = new_reqs
+                    it.updated_at = self._now_iso()
+                    self._write_all(items)
+                    return it
+            raise KeyError(app_id)
 
     # === aggregates ===
 
@@ -341,14 +396,17 @@ class ApplicationsService:
 
             if i.fee_waived:
                 fees_waived += fee
-            elif i.status != "decision":
+            elif i.status != "decision" and not i.archived:
                 fees_due += fee
 
             if i.type == "scholarship" and i.status != "decision" and not i.archived:
                 potential_awards += amount
 
-            if i.decision_result == "accepted":
-                won_awards += amount
+            if i.decision_result == "accepted" and i.status == "decision" and not i.archived:
+                if i.awarded_amount is not None:
+                    won_awards += i.awarded_amount
+                elif i.type == "scholarship":
+                    won_awards += amount
 
             bucket = by_type.setdefault(i.type or "", {"count": 0, "amount": 0.0})
             bucket["count"] += 1
@@ -433,19 +491,26 @@ class ApplicationsService:
         text = (text or "").lstrip("\ufeff")
         rows = list(csv.reader(io.StringIO(text)))
         rows = [r for r in rows if any(c.strip() for c in r)]
-        result: dict = {"created": 0, "skipped_duplicates": 0, "errors": [], "rows": []}
+        result: dict = {"created": 0, "skipped_duplicates": 0, "errors": [], "rows": [], "warnings": []}
         if not rows:
             result["errors"].append({"row": 0, "message": "empty CSV"})
             return result
         cols: dict[str, int] = {}
+        ignored: list[str] = []
         for idx, h in enumerate(rows[0]):
-            canon = _CSV_ALIASES.get(re.sub(r"[^a-z]", "", h.lower()))
+            canon = _csv_canon(h)
             if canon and canon not in cols:
                 cols[canon] = idx
+            elif not canon and h.strip():
+                ignored.append(h.strip())
         if "name" not in cols:
             result["errors"].append({"row": 1, "message": "no name/title/scholarship column in header"})
             return result
 
+        if ignored:
+            result["warnings"].append(
+                {"message": "Ignored unrecognized columns: " + ", ".join(ignored)}
+            )
         existing = {
             _dedupe_key(i.name, i.org, i.deadline) for i in self._read_all() if i.type == "scholarship"
         }
@@ -477,7 +542,7 @@ class ApplicationsService:
             if cell("amount"):
                 try:
                     amount = float(re.sub(r"[$,\s]", "", cell("amount")))
-                    if amount < 0:
+                    if amount < 0 or not math.isfinite(amount):
                         raise ValueError
                 except ValueError:
                     result["errors"].append({"row": n, "message": f"invalid amount {cell('amount')!r}"})
@@ -514,6 +579,30 @@ _CSV_ALIASES = {
     "notes": "notes", "note": "notes",
     "eligibility": "eligibility", "renewable": "renewable",
 }
+
+
+def _csv_canon(header: str) -> Optional[str]:
+    """Map a header to a canonical column: exact alias first, then keyword match."""
+    key = re.sub(r"[^a-z]", "", header.lower())
+    if not key:
+        return None
+    if key in _CSV_ALIASES:
+        return _CSV_ALIASES[key]
+    if key in ("awardname", "programname"):
+        return "name"
+    if "deadline" in key or key.startswith("due") or key.endswith("duedate"):
+        return "deadline"
+    if "amount" in key or key.startswith("award") or "value" in key:
+        return "amount"
+    if "provider" in key or "sponsor" in key or "organi" in key:
+        return "org"
+    if "eligib" in key:
+        return "eligibility"
+    if "scholarship" in key or key in ("programname", "awardname"):
+        return "name"
+    if "url" in key or "link" in key or "website" in key:
+        return "url"
+    return None
 
 
 def _dedupe_key(name: str, org: str, deadline: Optional[str]) -> tuple:

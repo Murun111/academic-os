@@ -16,11 +16,14 @@ always returns at least this module's own tasks.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+from backend.services._store_lock import lock_for, unique_tmp
 
 
 PRIORITIES = ("low", "normal", "high")
@@ -70,6 +73,7 @@ class StudyService:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._path = self.data_dir / "tasks.jsonl"
+        self._lock = lock_for(self._path)
 
     def _read_all(self) -> list[Task]:
         if not self._path.exists():
@@ -90,11 +94,15 @@ class StudyService:
 
     def _write_all(self, tasks: list[Task]) -> None:
         """Atomic rewrite — write to .tmp, rename over the real file."""
-        tmp = self._path.with_suffix(".jsonl.tmp")
-        with tmp.open("w") as f:
-            for t in tasks:
-                f.write(json.dumps(t.to_dict(), separators=(",", ":")) + "\n")
-        tmp.replace(self._path)
+        tmp = unique_tmp(self._path)
+        try:
+            with tmp.open("w") as f:
+                for t in tasks:
+                    f.write(json.dumps(t.to_dict(), separators=(",", ":")) + "\n")
+            os.replace(tmp, self._path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def _new_id(self) -> str:
         return uuid.uuid4().hex[:12]
@@ -170,13 +178,18 @@ class StudyService:
             priority=priority,
             notes=notes,
         )
-        with self._path.open("a") as f:
-            f.write(json.dumps(task.to_dict(), separators=(",", ":")) + "\n")
+        with self._lock:
+            with self._path.open("a") as f:
+                f.write(json.dumps(task.to_dict(), separators=(",", ":")) + "\n")
         return task
 
     def update(self, task_id: str, **fields) -> Task:
         if not fields:
             raise StudyServiceError("update() called with no fields to change")
+        with self._lock:
+            return self._update_locked(task_id, fields)
+
+    def _update_locked(self, task_id: str, fields: dict) -> Task:
         tasks = self._read_all()
         for t in tasks:
             if t.id == task_id:
@@ -197,11 +210,12 @@ class StudyService:
         raise StudyServiceError(f"task {task_id!r} not found")
 
     def delete(self, task_id: str) -> None:
-        tasks = self._read_all()
-        new_tasks = [t for t in tasks if t.id != task_id]
-        if len(new_tasks) == len(tasks):
-            raise StudyServiceError(f"task {task_id!r} not found")
-        self._write_all(new_tasks)
+        with self._lock:
+            tasks = self._read_all()
+            new_tasks = [t for t in tasks if t.id != task_id]
+            if len(new_tasks) == len(tasks):
+                raise StudyServiceError(f"task {task_id!r} not found")
+            self._write_all(new_tasks)
 
     def mark_done(self, task_id: str) -> Task:
         return self.update(task_id, done=True)

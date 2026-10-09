@@ -120,3 +120,4 @@ def test_scholarship_scout_example_includes_web_search(runner: AgentRunner):
     assert "academics.student_profile" in allowed
     assert "academics.add_application" in allowed
     assert "vault.write" not in allowed
+

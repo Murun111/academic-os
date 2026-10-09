@@ -53,12 +53,21 @@ export function Applications() {
   const [showScout, setShowScout] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [summary, setSummary] = useState<ScholarshipSummary | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [formError, setFormError] = useState('')
 
-  // every applicationsApi call degrades to a safe fallback, so this never throws
+  // every applicationsApi call degrades to a safe fallback, so this never throws.
+  // A failed list is kept apart from an empty one so the page can offer a retry.
   const load = useCallback(async () => {
     const [list, soon, costsRes] = await Promise.all([
-      applicationsApi.list(), applicationsApi.deadlines(30), applicationsApi.costs(),
+      applicationsApi.listChecked(), applicationsApi.deadlines(30), applicationsApi.costs(),
     ])
+    if (list === null) {
+      setLoadFailed(true)
+      setLoading(false)
+      return
+    }
+    setLoadFailed(false)
     setItems(list)
     setDeadlines(soon)
     setCosts(costsRes)
@@ -89,18 +98,24 @@ export function Applications() {
   const [typeFilter, setTypeFilter] = useState<ApplicationType | 'all' | 'archived'>('all')
   const activeItems = items.filter((i) => !i.archived)
   const archivedItems = items.filter((i) => i.archived)
-  const showScholarshipStrip =
-    (typeFilter === 'all' || typeFilter === 'scholarship') &&
-    activeItems.some((i) => i.type === 'scholarship')
   const presentTypes = APPLICATION_TYPES.filter((t) => activeItems.some((i) => i.type === t))
+  // a filter whose tab has disappeared (last scholarship deleted, last archived card
+  // restored) falls back to everything, otherwise the page strands on an empty view
+  const filterGone =
+    typeFilter === 'archived' ? archivedItems.length === 0
+    : typeFilter !== 'all' && !presentTypes.includes(typeFilter)
+  const filter = filterGone ? 'all' : typeFilter
+  const showScholarshipStrip =
+    (filter === 'all' || filter === 'scholarship') &&
+    activeItems.some((i) => i.type === 'scholarship')
   const visible =
-    typeFilter === 'archived' ? archivedItems
-    : typeFilter === 'all' ? activeItems
-    : activeItems.filter((i) => i.type === typeFilter)
+    filter === 'archived' ? archivedItems
+    : filter === 'all' ? activeItems
+    : activeItems.filter((i) => i.type === filter)
   const visibleDeadlines =
-    typeFilter === 'archived' ? []
-    : typeFilter === 'all' ? deadlines
-    : deadlines.filter((d) => d.type === typeFilter)
+    filter === 'archived' ? []
+    : filter === 'all' ? deadlines
+    : deadlines.filter((d) => d.type === filter)
   // "Secondaries" (between Submitted and Interview) is a med/dental-cycle
   // concept: show the column only for those tracks — or whenever an item
   // already sits in it, so data is never hidden.
@@ -138,10 +153,19 @@ export function Applications() {
   const submitForm = async () => {
     if (!formName.trim()) return
     setBusy(true)
-    const created = await applicationsApi.create({ name: formName.trim(), type: formType, deadline: formDeadline || null })
+    setFormError('')
+    const { item: created, error } = await applicationsApi.createChecked({
+      name: formName.trim(), type: formType, deadline: formDeadline || null,
+    })
+    if (!created) {
+      // keep the form open with the user's input so nothing is lost
+      setFormError(error ?? 'Could not add the application.')
+      setBusy(false)
+      return
+    }
     // stage+track-aware requirement template: seed the checklist for this type
     const template = templateFor(formType)
-    if (created && template) {
+    if (template) {
       for (const label of template) {
         await applicationsApi.addRequirement(created.id, label)
       }
@@ -182,6 +206,12 @@ export function Applications() {
 
   return (
     <div className="mx-auto max-w-[1200px]">
+      {loadFailed && (
+        <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-fail/30 px-4 py-2.5 text-[12.5px] text-fail">
+          <span>Could not load applications. The backend may be down or restarting.</span>
+          <Btn onClick={() => { setLoading(true); void load() }}>Retry</Btn>
+        </div>
+      )}
       <div className="mb-6 flex items-end justify-between">
         <div>
           <p className="label-mono mb-1">{appsSub}</p>
@@ -264,6 +294,7 @@ export function Applications() {
                 </Btn>
                 <Btn onClick={() => setShowForm(false)}>Cancel</Btn>
               </div>
+              {formError && <p role="alert" className="mt-2 text-[12px] text-fail">{formError}</p>}
             </Panel>
           </motion.div>
         )}
@@ -285,7 +316,7 @@ export function Applications() {
                 key={t}
                 onClick={() => setTypeFilter(t)}
                 className={`rounded-full border px-3 py-1.5 text-[12.5px] transition-colors duration-150 ${
-                  typeFilter === t
+                  filter === t
                     ? 'border-ink/25 bg-ink/6 text-hi'
                     : 'border-line text-mid hover:border-ink/15 hover:text-hi'
                 }`}
@@ -307,14 +338,14 @@ export function Applications() {
               { label: 'pending', value: String(summary?.pending_count ?? 0) },
               {
                 label: 'next deadline',
-                value: summary?.next_deadlines[0]
-                  ? `${summary.next_deadlines[0].name} · ${summary.next_deadlines[0].deadline}`
-                  : 'none',
+                value: summary?.next_deadlines[0] ? summary.next_deadlines[0].name : 'none',
+                sub: summary?.next_deadlines[0]?.deadline,
               },
-            ].map((t) => (
+            ].map((t: { label: string; value: string; sub?: string }) => (
               <Panel key={t.label} className="px-4 py-3">
                 <p className="label-mono mb-1">{t.label}</p>
                 <p className="truncate text-[15px] font-semibold text-hi" title={t.value}>{t.value}</p>
+                {t.sub && <p className="font-mono text-[11.5px] text-low">{t.sub}</p>}
               </Panel>
             ))}
           </div>
@@ -358,28 +389,29 @@ export function Applications() {
             <button
               key={d.id}
               onClick={() => setSelected(d.id)}
-              className="flex items-center gap-3 rounded-[10px] px-3 py-2 text-left hover:bg-ink/4"
+              className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-[10px] px-3 py-2 text-left hover:bg-ink/4"
             >
               <Calendar size={13} className="shrink-0 text-low" />
-              <span className="flex-1 truncate text-[12.5px] text-mid">{d.name}</span>
-              <Pill>{d.type}</Pill>
-              <DeadlineLabel deadline={d.deadline} />
+              <span className="min-w-[8rem] flex-1 truncate text-[12.5px] text-mid">{d.name}</span>
+              <span className="shrink-0"><Pill>{d.type}</Pill></span>
+              <span className="shrink-0 whitespace-nowrap"><DeadlineLabel deadline={d.deadline} /></span>
             </button>
           ))}
         </div>
       </Panel>
 
       {visible.length === 0 ? (
+        loadFailed ? null :
         <EmptyState title="No applications yet." hint="Add your first application to start the pipeline." />
       ) : (
         // columns share the width equally — the whole board always fits with no
         // horizontal scroll, whether 5 columns or 6 (Secondaries tracks)
         <div data-tour="apps-board" className="pb-2">
-          <div className="flex gap-2.5">
+          <div className="flex gap-2.5 overflow-x-auto">
             {columns.map(({ status, items: colItems }) => (
               <div
                 key={status}
-                className={`min-w-0 flex-1 basis-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
+                className={`min-w-[150px] flex-1 basis-0 rounded-[12px] transition-colors duration-150 ${dragOver === status ? 'bg-ink/4 ring-1 ring-ink/10' : ''}`}
                 onDragOver={(e) => {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
@@ -452,7 +484,7 @@ export function Applications() {
             item={selectedItem}
             busy={busy}
             setBusy={setBusy}
-            canSeedChecklist={Boolean(cfg.requirementTemplates[selectedItem.type])}
+            canSeedChecklist={Boolean(templateFor(selectedItem.type))}
             templateFor={templateFor}
             onClose={() => setSelected(null)}
             onChanged={load}

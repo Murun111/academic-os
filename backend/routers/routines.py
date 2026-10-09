@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+import httpx
+
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -18,17 +20,17 @@ router = APIRouter(prefix="/api/routines", tags=["routines"])
 
 
 class EssayFeedbackRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-    prompt_hint: str = ""
+    text: str = Field(..., min_length=1, max_length=60_000)
+    prompt_hint: str = Field("", max_length=2_000)
 
 
 class ResumeFeedbackRequest(BaseModel):
-    content: str = Field(..., min_length=1)
-    title: str = ""
+    content: str = Field(..., min_length=1, max_length=60_000)
+    title: str = Field("", max_length=2_000)
 
 
 class DeadlineBriefRequest(BaseModel):
-    days: int = 14
+    days: int = Field(14, ge=1, le=90)
 
 
 CATALOG: dict = {
@@ -55,13 +57,24 @@ CATALOG: dict = {
 }
 
 
+def _llm_failure(exc: Exception) -> JSONResponse:
+    """503 only when the model is genuinely unreachable; anything else is a 502."""
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return JSONResponse(status_code=503, content={"detail": "Local model offline — start Ollama"})
+    print(f"[routines] model call failed: {exc!r}")
+    return JSONResponse(
+        status_code=502,
+        content={"detail": f"The local model failed to answer: {str(exc)[:200] or type(exc).__name__}"},
+    )
+
+
 @router.get("/catalog")
 def get_catalog() -> dict:
     return CATALOG
 
 
 @router.get("/deadline-digest")
-def get_deadline_digest(days: int = 14) -> dict:
+def get_deadline_digest(days: int = Query(14, ge=1, le=90)) -> dict:
     return deadline_digest(days=days)
 
 
@@ -70,8 +83,8 @@ async def post_deadline_digest_brief(request: Request, body: DeadlineBriefReques
     ollama = request.app.state.ollama
     try:
         return await deadline_digest_llm(ollama, days=body.days)
-    except Exception:
-        return JSONResponse(status_code=503, content={"detail": "Local model offline — start Ollama"})
+    except Exception as e:
+        return _llm_failure(e)
 
 
 @router.post("/essay-feedback")
@@ -79,8 +92,8 @@ async def post_essay_feedback(request: Request, body: EssayFeedbackRequest) -> A
     ollama = request.app.state.ollama
     try:
         return await essay_feedback(ollama, text=body.text, prompt_hint=body.prompt_hint)
-    except Exception:
-        return JSONResponse(status_code=503, content={"detail": "Local model offline — start Ollama"})
+    except Exception as e:
+        return _llm_failure(e)
 
 
 @router.post("/resume-feedback")
@@ -88,5 +101,5 @@ async def post_resume_feedback(request: Request, body: ResumeFeedbackRequest) ->
     ollama = request.app.state.ollama
     try:
         return await resume_feedback(ollama, content=body.content, title=body.title)
-    except Exception:
-        return JSONResponse(status_code=503, content={"detail": "Local model offline — start Ollama"})
+    except Exception as e:
+        return _llm_failure(e)

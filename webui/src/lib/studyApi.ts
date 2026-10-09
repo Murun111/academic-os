@@ -118,13 +118,31 @@ export function kindTone(kind: AgendaKind): string {
   return ''
 }
 
+// Dates are the student's LOCAL calendar day. toISOString() is UTC, which put
+// "today" a day off (UTC+ mornings, US evenings) and disagreed with the
+// backend's local date.today().
+export function localIso(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+export function todayIso(): string {
+  return localIso(new Date())
+}
+
+export function addDaysIso(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00`) // local midnight
+  d.setDate(d.getDate() + n)
+  return localIso(d)
+}
+
 export function isOverdue(dateStr: string | null): boolean {
   if (!dateStr) return false
-  const today = new Date().toISOString().slice(0, 10)
-  return dateStr < today
+  return dateStr < todayIso()
 }
 
 export function isToday(dateStr: string | null): boolean {
   if (!dateStr) return false
-  return dateStr === new Date().toISOString().slice(0, 10)
+  return dateStr === todayIso()
 }

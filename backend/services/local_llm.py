@@ -50,6 +50,7 @@ _proc: subprocess.Popen | None = None
 _download_thread: threading.Thread | None = None
 _start_thread: threading.Thread | None = None
 _start_lock = threading.Lock()
+_ensure_lock = threading.Lock()  # serialises check-then-spawn in ensure_running
 _starting = False
 _start_error: str | None = None
 
@@ -106,6 +107,13 @@ def status() -> dict:
             prog = json.loads(_progress_path().read_text())
         except (json.JSONDecodeError, OSError):
             pass
+    if (isinstance(prog, dict) and not prog.get("done") and not prog.get("error")
+            and not (_download_thread and _download_thread.is_alive())):
+        # Progress file says "downloading" but no thread is alive: the app was
+        # quit / slept mid-download. Report it as interrupted so the UI shows
+        # the (resumable) download buttons again instead of polling forever.
+        prog = {**prog, "pct": prog.get("pct"), "done": False,
+                "error": "interrupted (the app closed or slept mid-download)"}
     inst = installed_model()
     return {
         "binary": binary_path() is not None,
@@ -138,21 +146,31 @@ def download_model(key: str) -> dict:
         part = target.with_suffix(".part")
         try:
             resume = part.stat().st_size if part.exists() else 0
-            headers = {"Range": f"bytes={resume}-"} if resume else {}
-            mode = "ab" if resume else "wb"
-            with httpx.stream("GET", spec["url"], headers=headers,
-                              follow_redirects=True, timeout=60) as r:
-                r.raise_for_status()
-                got = resume
-                with open(part, mode) as f:
-                    for chunk in r.iter_bytes(1024 * 512):
-                        f.write(chunk)
-                        got += len(chunk)
-                        _progress_path().write_text(json.dumps({
-                            "model": key, "pct": round(got / spec["size"] * 100, 1),
-                            "done": False, "error": None}))
+            if resume > spec["size"]:
+                part.unlink(missing_ok=True)  # oversized leftover: start over
+                resume = 0
+            if resume < spec["size"]:
+                headers = {"Range": f"bytes={resume}-"} if resume else {}
+                with httpx.stream("GET", spec["url"], headers=headers,
+                                  follow_redirects=True, timeout=60) as r:
+                    r.raise_for_status()
+                    got = resume
+                    mode = "ab" if resume else "wb"
+                    if resume and r.status_code != 206:
+                        # Server ignored Range and sent the whole body: restart.
+                        got, mode = 0, "wb"
+                    with open(part, mode) as f:
+                        for chunk in r.iter_bytes(1024 * 512):
+                            f.write(chunk)
+                            got += len(chunk)
+                            _progress_path().write_text(json.dumps({
+                                "model": key, "pct": round(got / spec["size"] * 100, 1),
+                                "done": False, "error": None}))
+            # (resume == size: the .part is already complete, go straight to verify)
             if part.stat().st_size != spec["size"]:
-                raise IOError(f"size mismatch: {part.stat().st_size} != {spec['size']}")
+                bad = part.stat().st_size
+                part.unlink(missing_ok=True)  # never leave a bad .part to 416 forever
+                raise IOError(f"size mismatch: {bad} != {spec['size']}")
             expected_sha256 = spec.get("sha256")
             if expected_sha256:
                 _progress_path().write_text(json.dumps(
@@ -183,7 +201,16 @@ def download_model(key: str) -> dict:
 # ── server lifecycle ──────────────────────────────────────────────
 
 def ensure_running(wait_seconds: int = 90) -> bool:
-    """Start llama-server if binary+model exist. Blocks until healthy."""
+    """Start llama-server if binary+model exist. Blocks until healthy.
+
+    Serialised: concurrent callers wait for the first one's spawn and then
+    see the healthy server, instead of each Popen-ing its own process.
+    """
+    with _ensure_lock:
+        return _ensure_running_locked(wait_seconds)
+
+
+def _ensure_running_locked(wait_seconds: int) -> bool:
     global _proc
     if server_running():
         return True
@@ -203,7 +230,7 @@ def ensure_running(wait_seconds: int = 90) -> bool:
     while time.time() < deadline:
         if server_running():
             return True
-        if _proc.poll() is not None:
+        if _proc is not None and _proc.poll() is not None:
             return False  # crashed
         time.sleep(1)
     return False
@@ -246,7 +273,30 @@ def start_running_async() -> dict:
     return {"ok": True, "starting": True}
 
 
+def _port_listener_pids() -> list[int]:
+    """PIDs of llama-server processes listening on PORT (orphans from a crash)."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    pids = []
+    for tok in out.split():
+        if not tok.isdigit():
+            continue
+        try:
+            comm = subprocess.run(["ps", "-p", tok, "-o", "comm="],
+                                  capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            continue
+        if "llama-server" in comm:  # never kill an unrelated process on the port
+            pids.append(int(tok))
+    return pids
+
+
 def stop() -> bool:
+    """Stop the server. Returns True when nothing is serving afterwards."""
     global _proc
     if _proc is not None and _proc.poll() is None:
         _proc.terminate()
@@ -255,7 +305,19 @@ def stop() -> bool:
         except subprocess.TimeoutExpired:
             _proc.kill()
     _proc = None
-    return True
+    if server_running():
+        # Not our child (app was killed earlier): stop the orphaned llama-server.
+        import signal
+        for pid in _port_listener_pids():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        for _ in range(20):
+            if not server_running():
+                break
+            time.sleep(0.25)
+    return not server_running()
 
 
 # ── OpenAI-format chat translation ────────────────────────────────

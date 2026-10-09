@@ -196,3 +196,16 @@ async def test_error_message_capped_at_200_chars(monkeypatch):
     result = await rem_mod.create_reminder("Test")
     assert result["ok"] is False
     assert len(result["error"]) <= 200
+
+
+@pytest.mark.asyncio
+async def test_day_reset_to_1_before_month_set(monkeypatch):
+    """F22: on the 29th-31st, setting month first overflows into the next month."""
+    monkeypatch.setattr(rem_mod.sys, "platform", "darwin")
+    captured: list[str] = []
+    monkeypatch.setattr(rem_mod.subprocess, "run",
+                        lambda cmd, **kw: (captured.append(cmd[2]), _make_proc())[1])
+    await rem_mod.create_reminder("x", due="2026-11-15")
+    s = captured[0]
+    assert s.index("set day of dueDate to 1\n") < s.index("set month of dueDate to 11")
+    assert s.index("set month of dueDate to 11") < s.index("set day of dueDate to 15")

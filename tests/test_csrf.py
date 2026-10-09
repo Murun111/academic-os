@@ -99,3 +99,24 @@ def test_no_origin_header_reaches_memory_item_delete_handler():
     assert not _is_forbidden_origin(r)
     # No such item — reaches the real handler and 404s there, not at CSRF.
     assert r.status_code == 404
+
+
+def test_dev_origins_gated_to_non_frozen_builds(monkeypatch):
+    """F98: the packaged app must not trust :5173; dev checkouts still do."""
+    import sys
+    import backend.app as app_mod
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("ACADEMIC_OS_DEV", raising=False)
+    assert app_mod.dev_origins_enabled() is False
+    packaged = app_mod._origin_list(app_mod.dev_origins_enabled())
+    assert "http://localhost:5173" not in packaged
+    assert "http://127.0.0.1:5173" not in packaged
+    assert "http://localhost:7878" in packaged
+
+    monkeypatch.setenv("ACADEMIC_OS_DEV", "1")
+    assert app_mod.dev_origins_enabled() is True
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.delenv("ACADEMIC_OS_DEV")
+    assert app_mod.dev_origins_enabled() is True
+    assert "http://localhost:5173" in app_mod._origin_list(True)

@@ -106,13 +106,16 @@ export function LmsSyncPanel({ onSynced }: { onSynced: () => void }) {
 // the two sources can't recognize each other's copies. Detect likely pairs by
 // normalized name and offer one-click removal of the feed copy (Canvas is the
 // richer source).
+// Exact match on the normalized full name. Truncating at '(' or '_' called
+// "Chemistry (Lab)" a copy of "Chemistry (Lecture)" and offered to delete it.
 function dupKey(name: string): string {
-  return name.toLowerCase().split('(')[0].split('_')[0].trim()
+  return name.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
 function DuplicateNotice({ onChanged }: { onChanged: () => void }) {
-  const [dupes, setDupes] = useState<{ id: string; name: string }[]>([])
+  const [dupes, setDupes] = useState<{ id: string; name: string; items: number; graded: number }[]>([])
   const [busy, setBusy] = useState(false)
+  const [armed, setArmed] = useState<string | null>(null)
 
   const scan = async () => {
     const res = await coursesApi.listCourses()
@@ -122,12 +125,20 @@ function DuplicateNotice({ onChanged }: { onChanged: () => void }) {
       (c) => c.source !== 'canvas' && (c.source === 'ics' || c.term === 'Synced') &&
         dupKey(c.name).length >= 4 && canvasKeys.has(dupKey(c.name)),
     )
-    setDupes(feedCopies.map((c) => ({ id: c.id, name: c.name })))
+    const all = feedCopies.length ? (await coursesApi.listAssignments()).assignments : []
+    setDupes(feedCopies.map((c) => {
+      const mine = all.filter((a) => a.course_id === c.id)
+      return {
+        id: c.id, name: c.name, items: mine.length,
+        graded: mine.filter((a) => a.grade != null || a.status === 'done').length,
+      }
+    }))
   }
   useEffect(() => { void scan() }, [])
 
   const removeCopy = async (id: string) => {
     setBusy(true)
+    setArmed(null)
     await coursesApi.deleteCourse(id)
     await scan()
     onChanged()
@@ -139,13 +150,20 @@ function DuplicateNotice({ onChanged }: { onChanged: () => void }) {
     <div className="rounded-[10px] border border-pend/25 bg-pend/8 px-3 py-2.5">
       <p className="mb-1.5 text-[12.5px] text-hi">
         These classes exist twice — once from Canvas, once from the calendar feed. Canvas has
-        more detail; you can safely remove the feed copies:
+        more detail. Removing a feed copy also deletes its assignments, including any grades or
+        done marks you entered there. Canvas courses are skipped by future feed syncs.
       </p>
       <div className="flex flex-col gap-1">
         {dupes.map((d) => (
           <div key={d.id} className="flex items-center justify-between gap-2">
-            <span className="truncate text-[12.5px] text-mid">{d.name}</span>
-            <Btn onClick={() => void removeCopy(d.id)} disabled={busy}>Remove feed copy</Btn>
+            <span className="truncate text-[12.5px] text-mid">
+              {d.name} <Mono className="text-low">{d.items} assignments{d.graded ? `, ${d.graded} with grade or done` : ''}</Mono>
+            </span>
+            {armed === d.id ? (
+              <Btn onClick={() => void removeCopy(d.id)} disabled={busy}>Sure? Delete copy and its assignments</Btn>
+            ) : (
+              <Btn onClick={() => { setArmed(d.id); setTimeout(() => setArmed((cur) => (cur === d.id ? null : cur)), 4000) }} disabled={busy}>Remove feed copy</Btn>
+            )}
           </div>
         ))}
       </div>
@@ -185,7 +203,7 @@ function CanvasSection({ onSynced }: { onSynced: () => void }) {
     if (!baseUrl.trim() || !token.trim()) return
     setBusy(true)
     const ok = await connectorsApi.canvasConnect(baseUrl.trim(), token.trim())
-    setNote(ok ? 'Connected — syncing your courses now…' : 'Could not save — check the URL and token.')
+    setNote(ok ? 'Connected — syncing your courses now…' : 'Could not save — the URL must start with https:// and the token must be valid.')
     if (ok) { setToken(''); setBaseUrl('') }
     await refresh()
     setBusy(false)

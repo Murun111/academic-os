@@ -119,3 +119,20 @@ def test_middleware_blocks_writes_when_format_incompatible(monkeypatch, tmp_path
     meta_resp = client.get("/api/meta")
     assert meta_resp.status_code == 200
     assert "data_format" in meta_resp.json()
+
+
+def test_middleware_lets_updater_install_through_on_newer_data(monkeypatch, tmp_path):
+    """F53: the banner says 'update the app' - the updater must not be 409'd."""
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    import backend.app as app_module
+
+    monkeypatch.setattr(
+        app_module, "DATA_FORMAT_STATE",
+        {"found": 99, "current": data_format.CURRENT_FORMAT, "compatible": False},
+    )
+    client = TestClient(app_module.app)
+    r = client.post("/api/update/install")
+    # Reaches the handler (400 ineligible in a dev/test process), not the 409 guard.
+    assert r.status_code == 400
+    assert r.json().get("error") != "data_format_newer"
+    assert client.put("/api/profile", json={"stage": "highschool", "name": "x"}).status_code == 409

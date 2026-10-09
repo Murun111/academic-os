@@ -1,6 +1,9 @@
 """In-app self-updater endpoints (macOS only, packaged builds only)."""
 from __future__ import annotations
 
+import os
+import sys
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -18,9 +21,10 @@ router = APIRouter(prefix="/api/update", tags=["update"])
 _ALLOWED_ORIGINS = {
     "http://localhost:7878",
     "http://127.0.0.1:7878",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
 }
+# Vite dev origins only outside the packaged app (see app.dev_origins_enabled).
+if (not getattr(sys, "frozen", False)) or os.environ.get("ACADEMIC_OS_DEV") == "1":
+    _ALLOWED_ORIGINS |= {"http://localhost:5173", "http://127.0.0.1:5173"}
 
 
 @router.get("/status")

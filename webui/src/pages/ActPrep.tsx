@@ -13,6 +13,10 @@ export const ACT_GAME_UNLOCK_NAME = 'PinkGlitterFart$parkles'
 
 export function ActPrep() {
   const userName = useOs((s) => s.userName)
+  const stageLoaded = useOs((s) => s.stageLoaded)
+  // userName is '' until the profile arrives: deciding before that bounced a
+  // reload of /#/act-prep to the dashboard.
+  if (!stageLoaded) return null
   // Hidden unless the secret name is set — a stray navigation to /act-prep on
   // any other copy just bounces to the dashboard.
   if (userName !== ACT_GAME_UNLOCK_NAME) return <Navigate to="/" replace />

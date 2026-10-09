@@ -23,6 +23,14 @@ if getattr(sys, "frozen", False):
 PORT = int(os.environ.get("BIND_PORT", "7878"))
 URL = f"http://127.0.0.1:{PORT}"
 
+# Set by the start-at-login LaunchAgent: run the server headless, no browser tab.
+NO_BROWSER = os.environ.get("ACADEMIC_OS_NO_BROWSER") == "1"
+
+
+def _open_browser() -> None:
+    if not NO_BROWSER:
+        webbrowser.open(URL)
+
 
 def _open_when_ready() -> None:
     deadline = time.time() + 30
@@ -30,7 +38,7 @@ def _open_when_ready() -> None:
         try:
             with urllib.request.urlopen(f"{URL}/health", timeout=1) as r:
                 if r.status == 200:
-                    webbrowser.open(URL)
+                    _open_browser()
                     return
         except Exception:
             time.sleep(0.5)
@@ -41,7 +49,7 @@ def main() -> None:
     try:
         with urllib.request.urlopen(f"{URL}/health", timeout=1) as r:
             if r.status == 200:
-                webbrowser.open(URL)
+                _open_browser()
                 return
     except Exception:
         pass

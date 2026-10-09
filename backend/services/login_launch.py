@@ -56,6 +56,10 @@ def enable() -> dict:
 {args_xml}
     </array>
     <key>WorkingDirectory</key><string>{repo}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ACADEMIC_OS_NO_BROWSER</key><string>1</string>
+    </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><false/>
 </dict>

@@ -8,6 +8,7 @@ import {
   type DeadlineDigestBriefing,
   type EssayFeedback,
   type RoutineCatalogEntry,
+  RoutinesApiError,
 } from '../lib/routinesApi'
 
 export function Routines() {
@@ -51,7 +52,7 @@ export function Routines() {
         <p className="text-[12.5px] text-low">
           Scheduled and background agents live on the{' '}
           <Link to="/agents" className="text-mid underline decoration-dotted hover:text-hi">
-            Agents
+            Assistants
           </Link>{' '}
           page. This page only runs routines on demand.
         </p>
@@ -68,20 +69,37 @@ function OfflineNote() {
   )
 }
 
+function FailedNote({ message }: { message: string }) {
+  return <p role="alert" className="text-[12.5px] text-fail">{message}</p>
+}
+
+// Split an LLM-call failure into "AI not available" vs "something else went wrong".
+function llmFailure(e: unknown): { offline: boolean; message: string } {
+  if (e instanceof RoutinesApiError) return { offline: e.offline, message: e.message }
+  return { offline: false, message: 'Something went wrong. Try again.' }
+}
+
 function DeadlineWatcherCard() {
   const [digest, setDigest] = useState<DeadlineDigest | null>(null)
   const [briefing, setBriefing] = useState<DeadlineDigestBriefing | null>(null)
   const [loadingDigest, setLoadingDigest] = useState(false)
   const [loadingBrief, setLoadingBrief] = useState(false)
   const [briefOffline, setBriefOffline] = useState(false)
+  const [briefError, setBriefError] = useState('')
+  const [digestError, setDigestError] = useState(false)
 
   const runNow = async () => {
     setLoadingDigest(true)
     setBriefing(null)
     setBriefOffline(false)
+    setBriefError('')
+    setDigestError(false)
     try {
       const d = await routinesApi.deadlineDigest(14)
       setDigest(d)
+    } catch {
+      setDigest(null)
+      setDigestError(true)
     } finally {
       setLoadingDigest(false)
     }
@@ -90,14 +108,16 @@ function DeadlineWatcherCard() {
   const runBriefing = async () => {
     setLoadingBrief(true)
     setBriefOffline(false)
+    setBriefError('')
     try {
       const b = await routinesApi.deadlineDigestBrief(14)
-      if (b) {
-        setBriefing(b)
-        setDigest(b)
-      } else {
-        setBriefOffline(true)
-      }
+      setBriefing(b)
+      setDigest(b)
+      setDigestError(false)
+    } catch (e) {
+      const f = llmFailure(e)
+      if (f.offline) setBriefOffline(true)
+      else setBriefError(f.message)
     } finally {
       setLoadingBrief(false)
     }
@@ -124,8 +144,12 @@ function DeadlineWatcherCard() {
         </p>
 
         {briefOffline && <div className="mb-3"><OfflineNote /></div>}
+        {briefError && <div className="mb-3"><FailedNote message={briefError} /></div>}
+        {digestError && (
+          <div className="mb-3"><FailedNote message="Couldn't load your deadlines. Check the app backend is running, then try again." /></div>
+        )}
 
-        {digest === null && !loadingDigest && (
+        {digest === null && !loadingDigest && !digestError && (
           <EmptyState title="No digest yet" hint="Click Run now." />
         )}
 
@@ -154,7 +178,7 @@ function DeadlineWatcherCard() {
         {briefing && (
           <div className="mt-3 border-t border-hairline pt-3">
             <p className="label-mono mb-1.5">ai briefing</p>
-            <p className="text-[13px] leading-relaxed text-hi">{briefing.briefing}</p>
+            <p className="whitespace-pre-line text-[13px] leading-relaxed text-hi">{briefing.briefing}</p>
           </div>
         )}
       </div>
@@ -168,19 +192,21 @@ function EssayFeedbackCard() {
   const [feedback, setFeedback] = useState<EssayFeedback | null>(null)
   const [loading, setLoading] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [failure, setFailure] = useState('')
 
   const getFeedback = async () => {
     if (!text.trim()) return
     setLoading(true)
     setOffline(false)
+    setFailure('')
     setFeedback(null)
     try {
       const f = await routinesApi.essayFeedback(text, promptHint)
-      if (f) {
-        setFeedback(f)
-      } else {
-        setOffline(true)
-      }
+      setFeedback(f)
+    } catch (e) {
+      const r = llmFailure(e)
+      if (r.offline) setOffline(true)
+      else setFailure(r.message)
     } finally {
       setLoading(false)
     }
@@ -213,6 +239,7 @@ function EssayFeedbackCard() {
         </Btn>
 
         {offline && <div className="mt-3"><OfflineNote /></div>}
+        {failure && <div className="mt-3"><FailedNote message={failure} /></div>}
 
         {feedback && (
           <div className="mt-4 border-t border-hairline pt-3">

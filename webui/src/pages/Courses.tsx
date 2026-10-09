@@ -31,8 +31,8 @@ export function Courses() {
   const [addingAssignmentFor, setAddingAssignmentFor] = useState<string | null>(null)
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all')
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const [searchParams] = useSearchParams()
-  const deepLinked = useRef(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const s = await coursesApi.summary()
@@ -69,17 +69,24 @@ export function Courses() {
     openCourse(courseId)
   }
 
-  // Deep link: expand once, after the first load has confirmed the id exists.
+  // Deep link: every new ?open=<id> (e.g. a second command-palette pick while
+  // this page is still mounted) expands that course once the list has loaded,
+  // then the param is cleared (replace) so Back / reload don't re-expand it.
   const openParam = searchParams.get('open')
   useEffect(() => {
-    if (deepLinked.current || loading || !openParam) return
-    if (!courses.some((c) => c.id === openParam)) return
-    deepLinked.current = true
-    openCourse(openParam)
-  }, [courses, loading, openParam, openCourse])
+    if (loading || !openParam) return
+    if (courses.some((c) => c.id === openParam)) openCourse(openParam)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('open')
+      return next
+    }, { replace: true })
+  }, [courses, loading, openParam, openCourse, setSearchParams])
 
   const addCourse = async (name: string, term: string, instructor: string) => {
-    await coursesApi.addCourse({ name, term, instructor })
+    const r = await coursesApi.addCourse({ name, term, instructor })
+    if (!r) { setError('Could not add the course. Check the name and term and try again.'); return }
+    setError(null)
     setShowAddCourse(false)
     void load()
   }
@@ -91,7 +98,9 @@ export function Courses() {
   }
 
   const addAssignment = async (courseId: string, title: string, due: string) => {
-    await coursesApi.addAssignment({ course_id: courseId, title, due: due || null })
+    const r = await coursesApi.addAssignment({ course_id: courseId, title, due: due || null })
+    if (!r) { setError('Could not add the assignment. Check the title and due date and try again.'); return }
+    setError(null)
     setAddingAssignmentFor(null)
     void loadAssignments(courseId)
     void load()
@@ -104,10 +113,15 @@ export function Courses() {
     void load()
   }
 
-  const commitGrade = async (a: Assignment, grade: number | null) => {
-    await coursesApi.updateAssignment(a.id, { grade })
+  // Resolves false when the server rejected the value, so the row can put the
+  // saved grade back in its input instead of showing a draft that never saved.
+  const commitGrade = async (a: Assignment, grade: number | null): Promise<boolean> => {
+    const r = await coursesApi.updateAssignment(a.id, { grade })
+    if (!r) setError('Grade must be a number from 0 to 100.')
+    else setError(null)
     void loadAssignments(a.course_id)
     void load()
+    return r != null
   }
 
   const commitAssignmentTitle = async (a: Assignment, title: string) => {
@@ -140,15 +154,25 @@ export function Courses() {
     courseId: string,
     fields: { name?: string; term?: string; instructor?: string; credits?: number | null },
   ) => {
-    await coursesApi.updateCourse(courseId, fields)
+    const r = await coursesApi.updateCourse(courseId, fields)
+    if (!r) setError('Could not save that change.')
+    else setError(null)
     void load()
+    return r != null
   }
 
-  const commitCredits = async (courseId: string, raw: string) => {
+  // Resolves false (nothing saved) for non-numeric or out-of-range input.
+  const commitCredits = async (courseId: string, raw: string): Promise<boolean> => {
     const trimmed = raw.trim()
-    const parsed = trimmed === '' ? null : Number(trimmed)
-    const credits = parsed === null || Number.isNaN(parsed) ? null : parsed
-    await commitCourseField(courseId, { credits })
+    let credits: number | null = null
+    if (trimmed !== '') {
+      credits = Number(trimmed)
+      if (Number.isNaN(credits) || credits < 0 || credits > 30) {
+        setError('Credit hours must be a number from 0 to 30.')
+        return false
+      }
+    }
+    return commitCourseField(courseId, { credits })
   }
 
   const active = courses.filter((c) => !c.archived)
@@ -184,6 +208,10 @@ export function Courses() {
           onClose={() => setShowSyllabus(false)}
           onDone={() => { void load(); if (expanded) void loadAssignments(expanded) }}
         />
+      )}
+
+      {error && (
+        <p role="alert" className="mb-4 rounded-lg border border-fail/30 px-3 py-2 text-[12.5px] text-fail">{error}</p>
       )}
 
       <GpaPanel courses={active} allCourses={courses} />
@@ -273,7 +301,12 @@ export function Courses() {
                       credit hours
                       <input
                         defaultValue={c.credits == null ? '' : String(c.credits)}
-                        onBlur={(e) => { if (e.target.value.trim() !== (c.credits == null ? '' : String(c.credits))) void commitCredits(c.id, e.target.value) }}
+                        onBlur={(e) => {
+                          const input = e.target
+                          const saved = c.credits == null ? '' : String(c.credits)
+                          if (input.value.trim() === saved) return
+                          void commitCredits(c.id, input.value).then((ok) => { if (!ok) input.value = saved })
+                        }}
                         placeholder={String(DEFAULT_CREDITS)}
                         className="w-[48px] rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"
                       />
@@ -317,7 +350,7 @@ export function Courses() {
                         onToggleStatus={(x) => void toggleAssignmentStatus(x)}
                         onTitleCommit={(x, t) => void commitAssignmentTitle(x, t)}
                         onDueCommit={(x, d) => void commitAssignmentDue(x, d)}
-                        onGradeCommit={(x, g) => void commitGrade(x, g)}
+                        onGradeCommit={(x, g) => commitGrade(x, g)}
                         onDelete={(x) => void deleteAssignment(x)}
                       />
                     ))}

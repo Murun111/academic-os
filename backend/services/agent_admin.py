@@ -127,7 +127,7 @@ async def set_schedule(
     Parameters
     ----------
     agent:
-        Agent name (matches the spec filename under Agentic OS/agents/, no .md).
+        Agent name (matches the spec filename under <root>/agents/, no .md).
     schedule:
         Cron string to set.  Empty string → remove the schedule line (disables
         cron without touching enabled:).  None → leave unchanged.
@@ -138,21 +138,27 @@ async def set_schedule(
     failure.  Never raises.
     """
     try:
-        from backend.services.tools import vault_read, vault_write
+        from backend.vault import agentic_os_dir
 
-        relpath = f"Agentic OS/agents/{agent}.md"
-        result = await vault_read(relpath)
-
-        if result.get("error") == "not_found":
+        if (
+            not agent
+            or "/" in agent
+            or "\\" in agent
+            or ".." in agent
+            or agent.startswith(".")
+        ):
+            return {"ok": False, "error": "invalid agent name"}
+        # Specs live in <root>/agents/ (same place AgentLoader reads). We edit
+        # directly: vault_write deliberately refuses agents/, and this path is
+        # only reachable through the approval gate.
+        spec_path = agentic_os_dir() / "agents" / f"{agent}.md"
+        if not spec_path.is_file():
             return {"ok": False, "error": "agent not found"}
-        if result.get("error"):
-            return {"ok": False, "error": result["error"]}
 
-        updated = _edit_frontmatter(result.get("content", ""), schedule, enabled)
-
-        write_result = await vault_write(relpath, updated)
-        if write_result.get("error"):
-            return {"ok": False, "error": write_result["error"]}
+        updated = _edit_frontmatter(spec_path.read_text(), schedule, enabled)
+        tmp = spec_path.with_suffix(".md.tmp")
+        tmp.write_text(updated)
+        os.replace(tmp, spec_path)
 
         return {"ok": True, "agent": agent, "schedule": schedule, "enabled": enabled}
 

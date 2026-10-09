@@ -53,10 +53,45 @@ SYNC_TIMEOUT_SECONDS = 120
 
 
 def _iso_date(dt: str | None) -> str | None:
-    """Canvas due_at '2026-09-15T23:59:00Z' → '2026-09-15'."""
+    """Canvas due_at '2026-09-16T03:59:00Z' → the student's LOCAL date
+    ('2026-09-15' in US Eastern). Canvas reports UTC, so taking the first 10
+    characters put evening deadlines a day late. Date-only values pass through."""
     if not dt:
         return None
-    return dt[:10] if len(dt) >= 10 else None
+    text = dt.strip()
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text[:10] if len(text) >= 10 else None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()  # system local timezone
+    return parsed.date().isoformat()
+
+
+MAX_PAGES = 50
+
+
+async def _get_all_pages(client: httpx.AsyncClient, url: str, params: dict) -> list:
+    """GET a Canvas list endpoint and follow the Link rel="next" header until
+    exhausted (Canvas paginates; per_page is only a hint). Next links must stay
+    on the same host so the Bearer token is never sent elsewhere."""
+    host = httpx.URL(url).host
+    out: list = []
+    next_url: str | None = url
+    next_params: dict | None = params
+    for _ in range(MAX_PAGES):
+        r = await client.get(next_url, params=next_params)
+        r.raise_for_status()
+        data = r.json()
+        if isinstance(data, list):
+            out.extend(data)
+        else:
+            break
+        nxt = (r.links.get("next") or {}).get("url")
+        if not nxt or httpx.URL(nxt).host != host:
+            break
+        next_url, next_params = nxt, None
+    return out
 
 
 class CanvasSyncService:
@@ -142,11 +177,10 @@ class CanvasSyncService:
 
         async with httpx.AsyncClient(timeout=25, headers=headers, follow_redirects=True) as client:
             try:
-                r = await client.get(f"{base}/api/v1/courses",
-                                     params={"enrollment_state": "active", "per_page": 50,
-                                             "include[]": "total_scores"})
-                r.raise_for_status()
-                canvas_courses = r.json()
+                canvas_courses = await _get_all_pages(
+                    client, f"{base}/api/v1/courses",
+                    {"enrollment_state": "active", "per_page": 50,
+                     "include[]": "total_scores"})
             except Exception as e:
                 kind = _classify_error(e)
                 status = _error_status(e)
@@ -190,11 +224,9 @@ class CanvasSyncService:
                                                   "kind": _classify_error(e)})
 
                 try:
-                    ra = await client.get(
-                        f"{base}/api/v1/courses/{cid}/assignments",
-                        params={"per_page": 50, "include[]": "submission"})
-                    ra.raise_for_status()
-                    assignments = ra.json()
+                    assignments = await _get_all_pages(
+                        client, f"{base}/api/v1/courses/{cid}/assignments",
+                        {"per_page": 50, "include[]": "submission"})
                 except Exception as e:
                     result["errors"].append({"scope": cname, "error": f"{type(e).__name__}: {e}",
                                               "kind": _classify_error(e)})

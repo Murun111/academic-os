@@ -60,6 +60,8 @@ export function LocalAiPanel() {
         setS(next)
         if (next.running) {
           setNote('Local AI running.')
+        } else if (next.start_error) {
+          setNote(`Could not start the local AI (${next.start_error}).`)
         } else if (Date.now() < deadline) {
           return // keep polling, stay busy
         } else {
@@ -76,8 +78,8 @@ export function LocalAiPanel() {
 
   const stopServer = async () => {
     setBusy(true)
-    await localaiApi.stop()
-    setNote('Stopped.')
+    const stopped = await localaiApi.stop()
+    setNote(stopped ? 'Stopped.' : "Couldn't stop the local AI. Quit Academic OS and reopen it, then try again.")
     await refresh()
     setBusy(false)
   }

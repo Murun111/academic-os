@@ -10,7 +10,7 @@ import { profileApi } from '../lib/profileApi'
 import { memoryApi, type MemoryItem } from '../lib/memoryApi'
 import { STAGES, STAGE_ORDER } from '../lib/stageConfig'
 import { TRACKS, TRACK_ORDER, trackApplies, trackConfig, daysToTest } from '../lib/trackConfig'
-import { study } from '../lib/studyApi'
+import { study, todayIso, addDaysIso } from '../lib/studyApi'
 
 export function Settings() {
   const [dataPath, setDataPath] = useState('~/.academic-os')
@@ -45,18 +45,28 @@ export function Settings() {
   const seedStudyPlan = async () => {
     if (!trackCfg?.studyPlan || !testDate) return
     setSeeding(true)
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayIso()
+    // skip steps already on the planner (same title + day) so a second click
+    // doesn't duplicate the whole plan
+    const existing = new Set((await study.tasks()).map((t) => `${t.title}|${t.day}`))
     let added = 0
+    let skipped = 0
+    let failed = 0
     for (const step of trackCfg.studyPlan) {
-      const d = new Date(`${testDate}T00:00:00`)
-      d.setDate(d.getDate() - step.daysBeforeTest)
-      let day = d.toISOString().slice(0, 10)
+      let day = addDaysIso(testDate, -step.daysBeforeTest)
       if (day < today) day = today // late start: pull past steps to today
-      await study.addTask({ title: step.title, day })
-      added += 1
+      if (existing.has(`${step.title}|${day}`)) { skipped += 1; continue }
+      // addTask resolves null when the save failed: only count real saves
+      const created = await study.addTask({ title: step.title, day })
+      if (created) added += 1
+      else failed += 1
     }
     setSeeding(false)
-    setPlanNote(`Added ${added} steps to your Study planner, anchored to ${testDate}.`)
+    setPlanNote(
+      `Added ${added} steps to your Study planner, anchored to ${testDate}.` +
+      (skipped ? ` ${skipped} already there, skipped.` : '') +
+      (failed ? ` ${failed} could not be saved. Click again to retry just those.` : ''),
+    )
   }
 
   // the store loads the profile async — sync the draft when it arrives
@@ -65,7 +75,8 @@ export function Settings() {
   const commitName = async () => {
     const next = nameDraft.trim()
     if (next === userName) return
-    await setUserName(next)
+    const ok = await setUserName(next)
+    if (!ok) { setNameDraft(userName); return } // store rolled back + toasted the failure
     setSaved(true)
     setTimeout(() => setSaved(false), 1600)
   }
@@ -401,35 +412,59 @@ function BackupPanel() {
   }
   useEffect(() => { void refresh() }, [])
 
+  // POST helper: a dropped connection, a 5xx HTML body or a 409 must end in a
+  // visible note, never a rejected handler with busy stuck on.
+  const post = async (url: string, body?: unknown): Promise<{ error?: string; [k: string]: unknown }> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      ...(body !== undefined ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
+    })
+    try {
+      return await res.json()
+    } catch {
+      return { error: `unexpected response (HTTP ${res.status})` }
+    }
+  }
+  const NET_ERR = 'Could not reach the app. Check that Academic OS is still running, then try again.'
+
   const savePath = async (p: string) => {
     setBusy(true)
-    const r = await (await fetch('/api/system/backup/config', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: p }),
-    })).json()
-    setNote(r.error ? `Could not use that folder: ${r.error}` : p ? 'Backup folder set.' : 'Backup off.')
-    await refresh()
-    setBusy(false)
+    try {
+      const r = await post('/api/system/backup/config', { path: p })
+      setNote(r.error ? `Could not use that folder: ${r.error}` : p ? 'Backup folder set.' : 'Backup off.')
+      await refresh()
+    } catch {
+      setNote(NET_ERR)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const backupNow = async () => {
     setBusy(true)
     setNote('Backing up…')
-    const r = await (await fetch('/api/system/backup/now', { method: 'POST' })).json()
-    setNote(r.ok ? `Backed up to ${r.dest}` : `Backup failed: ${r.error}`)
-    await refresh()
-    setBusy(false)
+    try {
+      const r = await post('/api/system/backup/now')
+      setNote(r.ok ? `Backed up to ${r.dest}` : `Backup failed: ${r.error}`)
+      await refresh()
+    } catch {
+      setNote(NET_ERR)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const toggleAutostart = async (enabled: boolean) => {
     setBusy(true)
-    const r = await (await fetch('/api/system/autostart', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    })).json()
-    if (r.error) setNote(r.error)
-    await refresh()
-    setBusy(false)
+    try {
+      const r = await post('/api/system/autostart', { enabled })
+      if (r.error) setNote(r.error)
+      await refresh()
+    } catch {
+      setNote(NET_ERR)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const previewRestore = async () => {

@@ -19,7 +19,8 @@ export function TutorPanel() {
 
   const send = async () => {
     if (!canSend) return
-    const next: TutorMessage[] = [...messages, { role: 'user', content: input.trim() }]
+    const sent = input
+    const next: TutorMessage[] = [...messages, { role: 'user', content: sent.trim() }]
     setMessages(next)
     setInput('')
     setError(null)
@@ -28,8 +29,13 @@ export function TutorPanel() {
       const res = await learning.tutor({ topic: topic.trim(), messages: next })
       setMessages([...next, { role: 'assistant', content: res.reply }])
     } catch (e) {
+      // Put the question back and drop the orphaned turn so a retry sends one user message.
+      setMessages(messages)
+      setInput((cur) => (cur.trim() === '' ? sent : cur))
       if (e instanceof LearningApiError && e.status === 503) {
         setError('The local AI tutor is not available right now. Start your local model and try again.')
+      } else if (e instanceof LearningApiError && e.status === 502) {
+        setError('The tutor answered in a format the app could not read. Try sending it again.')
       } else {
         setError('The tutor could not reply. Check your connection and try again.')
       }
@@ -87,7 +93,11 @@ export function TutorPanel() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void send() }}
+            onKeyDown={(e) => {
+              // Enter that confirms an IME candidate (keyCode 229) must not send.
+              if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return
+              void send()
+            }}
             placeholder="Ask a question…"
             aria-label="Message to tutor"
             className="flex-1 rounded-md border border-line bg-transparent px-2 py-1.5 text-[13px] text-hi placeholder:text-low focus:outline-none"

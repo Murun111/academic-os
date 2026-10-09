@@ -145,3 +145,17 @@ async def test_vault_write_succeeds_to_wiki(tmp_path: Path, monkeypatch):
     assert result.get("ok") is True
     assert (tmp_path / "wiki" / "test.md").exists()
     assert (tmp_path / "wiki" / "test.md").read_text() == "# hi"
+
+
+def test_vault_read_write_fence_pre_restore_snapshots(tmp_path, monkeypatch):
+    """F94: restore snapshots are full data copies; agents must not touch them."""
+    import asyncio
+    from backend.services import tools
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    snap = tmp_path / "pre-restore-snapshots" / "20260101-000000"
+    snap.mkdir(parents=True)
+    (snap / "x.txt").write_text("secret")
+    r = asyncio.run(tools.vault_read("pre-restore-snapshots/20260101-000000/x.txt"))
+    assert r["error"] == "forbidden"
+    w = asyncio.run(tools.vault_write("pre-restore-snapshots/20260101-000000/y.txt", "z"))
+    assert w["error"] == "forbidden"

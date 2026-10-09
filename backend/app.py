@@ -183,13 +183,29 @@ def _send_to_ws(ws, msg):
 
 app = FastAPI(title="Academic OS", version="0.1.0", lifespan=lifespan)
 
+def dev_origins_enabled() -> bool:
+    """Vite dev-server origins (:5173) are trusted only in dev checkouts.
+
+    The packaged (frozen) app must not trust whatever else happens to run on
+    Vite's default port (a student project, a compromised dev page): that page
+    could read every GET and fire destructive POSTs. Override for browser
+    testing a built app with ACADEMIC_OS_DEV=1.
+    """
+    import sys
+    return (not getattr(sys, "frozen", False)) or os.environ.get("ACADEMIC_OS_DEV") == "1"
+
+
+_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_PROD_ORIGINS = ["http://localhost:7878", "http://127.0.0.1:7878"]
+
+
+def _origin_list(dev: bool) -> list[str]:
+    return _PROD_ORIGINS + (_DEV_ORIGINS if dev else [])
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:7878",  # production same-origin
-        "http://127.0.0.1:7878",
-    ],
+    allow_origins=_origin_list(dev_origins_enabled()),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -197,12 +213,7 @@ app.add_middleware(
 
 # Origins allowed to open /ws/events. Absent Origin (non-browser clients,
 # tests) is allowed too — only a mismatched browser Origin is rejected.
-_WS_ALLOWED_ORIGINS = {
-    "http://localhost:7878",
-    "http://127.0.0.1:7878",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-}
+_WS_ALLOWED_ORIGINS = set(_origin_list(dev_origins_enabled()))
 
 # Origins allowed to send mutating (POST/PUT/PATCH/DELETE) requests to /api/*.
 # Same literal set as _WS_ALLOWED_ORIGINS by design (kept as a separate name
@@ -243,6 +254,8 @@ async def block_writes_on_newer_data_format(request, call_next):
         not DATA_FORMAT_STATE.get("compatible", True)
         and path.startswith("/api")
         and path != "/api/meta"
+        # The in-app updater is the remedy the banner tells the user to take.
+        and not path.startswith("/api/update/")
         and request.method not in ("GET", "HEAD", "OPTIONS")
     ):
         return JSONResponse(
@@ -393,6 +406,32 @@ def _chat_system_context(user_text: str) -> list["ChatMessage"]:
     return out
 
 
+_HISTORY_TURNS = 20
+
+
+def _thread_history_msgs(thread_id: str | None, raw_msgs: list) -> list["ChatMessage"]:
+    """Earlier user/assistant turns of *thread_id* to prepend to the model input.
+
+    The Chat client posts only the latest user message plus a thread_id, so
+    without this every follow-up ("explain that more simply") reaches the
+    model with no context. If the caller already sent a multi-message history
+    we trust it and add nothing.
+    """
+    if not thread_id or len(raw_msgs) > 1:
+        return []
+    try:
+        thread = get_thread(thread_id)
+    except Exception:
+        return []
+    if not thread:
+        return []
+    out: list[ChatMessage] = []
+    for m in (thread.get("messages") or [])[-_HISTORY_TURNS:]:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            out.append(ChatMessage(role=m["role"], content=m["content"]))
+    return out
+
+
 @app.post("/api/llms/chat")
 async def llms_chat(body: dict) -> JSONResponse:
     """Route a chat call to the chosen backend.
@@ -419,7 +458,7 @@ async def llms_chat(body: dict) -> JSONResponse:
         None,
     )
     user_text = last_user["content"] if last_user else ""
-    msgs = _chat_system_context(user_text) + [
+    msgs = (await asyncio.to_thread(_chat_system_context, user_text)) + _thread_history_msgs(thread_id, raw_msgs) + [
         ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs
     ]
     try:
@@ -491,7 +530,7 @@ async def llms_chat_stream(body: dict):
     llm_backend = get_backend(backend_name)
     # Same house-style + grounding + recall the non-streaming path gets — the
     # Chat tab streams, so without this the streamed answers would be ungrounded.
-    llm_msgs = _chat_system_context(user_text) + [
+    llm_msgs = (await asyncio.to_thread(_chat_system_context, user_text)) + _thread_history_msgs(thread_id, raw_msgs) + [
         ChatMessage(role=m["role"], content=m["content"]) for m in raw_msgs
     ]
     t0 = time.time()
@@ -526,6 +565,8 @@ async def llms_chat_stream(body: dict):
                     "tokens": 0, "elapsed_ms": int((time.time() - t0) * 1000),
                 }
             tid = _persist(message.get("content", full))
+            if tid and os.environ.get("MEMORY_CONSOLIDATION", "1") != "0":
+                asyncio.create_task(_consolidate_safe(tid))
             yield f"data: {json.dumps({'done': True, 'thread_id': tid, 'message': message})}\n\n"
         except asyncio.CancelledError:
             # client went away mid-stream — keep whatever text arrived
@@ -719,7 +760,8 @@ def _scrub_memory_notes(deleted_text: str) -> None:
     notes_dir = resolve_vault_path() / "notes" / "memory"
     if not notes_dir.exists():
         return
-    for md_path in notes_dir.glob("*.md"):
+    # rglob: memory_writer also appends every item to notes/memory/log/<date>.md
+    for md_path in notes_dir.rglob("*.md"):
         try:
             original = md_path.read_text(encoding="utf-8")
         except OSError:
@@ -844,6 +886,7 @@ async def approvals_decide(body: dict) -> JSONResponse:
     """
     from backend.services.approvals import (
         list_pending, decide, execute_item, was_executed, mark_executed,
+        revoke_decision,
     )
     item_id = (body or {}).get("item_id", "")
     decision = (body or {}).get("decision", "")
@@ -884,6 +927,9 @@ async def approvals_decide(body: dict) -> JSONResponse:
                 exec_result = await execute_item(item, tools)
                 if isinstance(exec_result, dict) and exec_result.get("executed"):
                     mark_executed(item_id, str(exec_result.get("result", ""))[:200])
+                elif isinstance(exec_result, dict) and exec_result.get("failed"):
+                    # Tool ran but reported failure: keep it pending for retry.
+                    revoke_decision(item_id)
                 # If an approved action changed an agent's schedule, re-register
                 # cron jobs immediately rather than waiting on the (iCloud-laggy)
                 # file watcher — so the change takes effect the moment it's approved.
@@ -969,8 +1015,12 @@ async def activity_recent(limit: int = 20) -> dict:
         ep = it.pop("epoch", 0.0)
         try:
             it["time"] = _dt.fromtimestamp(ep).strftime("%H:%M") if ep else ""
+            # Full local timestamp so the UI can show real ages ("3d"), not
+            # pin an HH:MM string onto today's date.
+            it["iso"] = _dt.fromtimestamp(ep).isoformat(timespec="seconds") if ep else ""
         except Exception:
             it["time"] = ""
+            it["iso"] = ""
         out_items.append(it)
     return {"items": out_items}
 

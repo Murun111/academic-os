@@ -68,3 +68,135 @@ def test_binary_path_found_in_vendor():
     # vendor/llama/llama-server is fetched by the build; present in this repo
     p = local_llm.binary_path()
     assert p is not None and p.name == "llama-server"
+
+
+# ── F54 / F55 / F60 / F70 regressions ────────────────────────────────
+
+def test_status_marks_stale_download_interrupted(monkeypatch, tmp_path):
+    """F54: 'downloading' progress with no live thread must not poll forever."""
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    monkeypatch.setattr(local_llm, "_download_thread", None)
+    local_llm._progress_path().write_text(json.dumps(
+        {"model": "standard", "pct": 35.0, "done": False, "error": None}))
+    dl = local_llm.status()["download"]
+    assert dl["error"] and "interrupted" in dl["error"]
+
+
+def _fake_model(monkeypatch, data: bytes):
+    import hashlib
+    spec = {"label": "t", "file": "t.gguf", "url": "http://x/t.gguf",
+            "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    monkeypatch.setattr(local_llm, "MODELS", {"standard": spec, "small": spec})
+    return spec
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_bytes(self, n):
+        yield self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _run_download():
+    r = local_llm.download_model("standard")
+    assert r.get("ok"), r
+    local_llm._download_thread.join(10)
+    return json.loads(local_llm._progress_path().read_text())
+
+
+def test_download_complete_part_goes_straight_to_verify(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    data = b"0123456789"
+    spec = _fake_model(monkeypatch, data)
+    part = local_llm.models_dir() / "t.part"
+    part.write_bytes(data)
+
+    def _no_http(*a, **k):  # pragma: no cover
+        raise AssertionError("must not request a Range past the end (416)")
+    monkeypatch.setattr(local_llm.httpx, "stream", _no_http)
+    prog = _run_download()
+    assert prog["done"] is True, prog
+    assert (local_llm.models_dir() / spec["file"]).read_bytes() == data
+
+
+def test_download_restarts_when_server_ignores_range(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    data = b"0123456789"
+    spec = _fake_model(monkeypatch, data)
+    (local_llm.models_dir() / "t.part").write_bytes(data[:4])
+    # CDN answers 200 with the full body to a Range request
+    monkeypatch.setattr(local_llm.httpx, "stream", lambda *a, **k: _Resp(200, data))
+    prog = _run_download()
+    assert prog["done"] is True, prog
+    assert (local_llm.models_dir() / spec["file"]).read_bytes() == data
+
+
+def test_download_deletes_oversized_part(monkeypatch, tmp_path):
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    data = b"0123456789"
+    _fake_model(monkeypatch, data)
+    (local_llm.models_dir() / "t.part").write_bytes(data + b"EXTRA")
+    monkeypatch.setattr(local_llm.httpx, "stream", lambda *a, **k: _Resp(200, data))
+    prog = _run_download()
+    assert prog["done"] is True, prog
+
+
+def test_ensure_running_spawns_once_for_concurrent_callers(monkeypatch, tmp_path):
+    import threading
+    import time as _t
+    real_sleep = _t.sleep
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    monkeypatch.setattr(local_llm, "_proc", None)
+    monkeypatch.setattr(local_llm, "binary_path", lambda: tmp_path / "bin")
+    monkeypatch.setattr(local_llm, "installed_model", lambda: ("small", tmp_path / "m"))
+    state = {"up": False, "popen": 0}
+
+    class _P:
+        def poll(self):
+            return None
+
+    def _popen(*a, **k):
+        state["popen"] += 1
+        threading.Timer(0.3, lambda: state.update(up=True)).start()
+        return _P()
+
+    monkeypatch.setattr(local_llm.subprocess, "Popen", _popen)
+    monkeypatch.setattr(local_llm, "server_running", lambda: state["up"])
+    monkeypatch.setattr(local_llm.time, "sleep", lambda s: real_sleep(0.05))
+    res = []
+    ts = [threading.Thread(target=lambda: res.append(local_llm.ensure_running(5))) for _ in range(3)]
+    [t.start() for t in ts]
+    [t.join(10) for t in ts]
+    assert state["popen"] == 1 and res == [True, True, True]
+
+
+def test_stop_terminates_orphaned_llama_server(monkeypatch):
+    import signal
+    monkeypatch.setattr(local_llm, "_proc", None)
+    state = {"up": True}
+    monkeypatch.setattr(local_llm, "server_running", lambda: state["up"])
+    monkeypatch.setattr(local_llm, "_port_listener_pids", lambda: [4242])
+    killed = []
+    monkeypatch.setattr(local_llm.os, "kill",
+                        lambda pid, sig: (killed.append((pid, sig)), state.update(up=False)))
+    assert local_llm.stop() is True
+    assert killed == [(4242, signal.SIGTERM)]
+
+
+def test_stop_reports_failure_when_still_running(monkeypatch):
+    monkeypatch.setattr(local_llm, "_proc", None)
+    monkeypatch.setattr(local_llm, "server_running", lambda: True)
+    monkeypatch.setattr(local_llm, "_port_listener_pids", lambda: [])
+    monkeypatch.setattr(local_llm.time, "sleep", lambda s: None)
+    assert local_llm.stop() is False

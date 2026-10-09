@@ -172,13 +172,16 @@ def _application_to_item(app: Any) -> dict:
     }
 
 
-def _assignment_to_item(assignment: Any) -> dict:
+def _assignment_to_item(assignment: Any, course_names: dict | None = None) -> dict:
+    # Show the course NAME, not the meaningless hex id (falls back to the id).
+    cid = assignment.course_id
     return {
         "kind": "assignment",
         "id": assignment.id,
         "title": assignment.title,
         "due": assignment.due,
-        "context": assignment.course_id,
+        "context": (course_names or {}).get(cid) or cid,
+        "course_id": cid,
     }
 
 
@@ -201,8 +204,12 @@ def deadline_digest(days: int = 14) -> dict:
 
     try:
         courses_service = _get_courses_service()
+        try:
+            course_names = {c.id: c.name for c in courses_service.list_courses()}
+        except Exception:
+            course_names = {}
         for assignment in courses_service.due_soon(days=days):
-            items.append(_assignment_to_item(assignment))
+            items.append(_assignment_to_item(assignment, course_names))
     except Exception:
         pass
 

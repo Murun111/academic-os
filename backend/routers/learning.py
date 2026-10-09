@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from backend.services.learning import (
     LearningService,
     LearningServiceError,
+    LearningValidationError,
 )
 from backend.services.learning_ai import (
     LearningAIBadOutput,
@@ -44,7 +45,7 @@ def reset_service() -> None:
 
 # ── Pydantic Request Models ──────────────────────────────────────────
 class DeckCreate(BaseModel):
-    title: str
+    title: str = Field(min_length=1)
     description: str = ""
     course_id: Optional[str] = None
     course_name: Optional[str] = None
@@ -61,11 +62,15 @@ class DeckUpdate(BaseModel):
 
 
 class CardCreate(BaseModel):
-    front: str
-    back: str
+    front: str = Field(min_length=1)
+    back: str = Field(min_length=1)
     hint: str = ""
     explanation: str = ""
     tags: list[str] = Field(default_factory=list)
+
+
+class CardBulkCreate(BaseModel):
+    cards: list[CardCreate] = Field(min_length=1, max_length=500)
 
 
 class CardReviewRequest(BaseModel):
@@ -109,7 +114,7 @@ class GuideCreate(BaseModel):
 
 
 class FocusSessionCreate(BaseModel):
-    duration_minutes: int
+    duration_minutes: int = Field(ge=1, le=1440)
     topic: str
     goal: str = ""
     reflections: str = ""
@@ -313,6 +318,8 @@ def get_deck(deck_id: str) -> dict[str, Any]:
 def update_deck(deck_id: str, body: DeckUpdate) -> dict[str, Any]:
     try:
         return get_service().update_deck(deck_id, **body.model_dump(exclude_unset=True))
+    except LearningValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except LearningServiceError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -330,8 +337,21 @@ def delete_deck(deck_id: str) -> dict[str, Any]:
 def add_card(deck_id: str, body: CardCreate) -> dict[str, Any]:
     try:
         return get_service().add_card(deck_id, **body.model_dump())
+    except LearningValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except LearningServiceError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/decks/{deck_id}/cards/bulk")
+def add_cards_bulk(deck_id: str, body: CardBulkCreate) -> dict[str, Any]:
+    try:
+        added = get_service().add_cards(deck_id, [c.model_dump() for c in body.cards])
+    except LearningValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except LearningServiceError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"cards": added}
 
 
 @router.delete("/decks/{deck_id}/cards/{card_id}")
@@ -344,8 +364,11 @@ def delete_card(deck_id: str, card_id: str) -> dict[str, Any]:
 
 
 @router.get("/due-cards")
-def get_due_cards(deck_id: Optional[str] = Query(default=None)) -> list[dict[str, Any]]:
-    return get_service().get_due_cards(deck_id=deck_id)
+def get_due_cards(
+    deck_id: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1, le=20000),
+) -> list[dict[str, Any]]:
+    return get_service().get_due_cards(deck_id=deck_id, limit=limit)
 
 
 @router.post("/decks/{deck_id}/cards/{card_id}/review")

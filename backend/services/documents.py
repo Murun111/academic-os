@@ -10,8 +10,11 @@ crash-safe appends, atomic rewrites for updates.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
+import tempfile
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -21,6 +24,19 @@ from typing import Optional
 
 KINDS = ("essay", "cv", "transcript", "lor", "certificate", "other")
 STATUSES = ("draft", "in_review", "final")
+
+
+# One process-wide lock: sync FastAPI routes run in a threadpool, and every
+# mutation is a read-modify-write of the same ledger file.
+_LEDGER_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        with _LEDGER_LOCK:
+            return fn(*a, **kw)
+    return wrapper
 
 
 class DocumentsServiceError(Exception):
@@ -66,9 +82,14 @@ class DocumentsService:
         self._path = self.data_dir / "items.jsonl"
 
     def _read_all(self) -> list[Document]:
+        return self._read_split()[0]
+
+    def _read_split(self) -> tuple[list[Document], list[str]]:
+        """Parsed documents plus the raw lines that could not be parsed."""
         if not self._path.exists():
-            return []
+            return [], []
         items: list[Document] = []
+        bad: list[str] = []
         with self._path.open() as f:
             for line in f:
                 line = line.strip()
@@ -79,16 +100,32 @@ class DocumentsService:
                     items.append(Document.from_dict(d))
                 except (json.JSONDecodeError, TypeError) as e:
                     print(f"[documents] skipping malformed line: {e!r}")
+                    bad.append(line)
                     continue
-        return items
+        return items, bad
 
     def _write_all(self, items: list[Document]) -> None:
-        """Atomic rewrite — write to .tmp, rename over the real file."""
-        tmp = self._path.with_suffix(".jsonl.tmp")
-        with tmp.open("w") as f:
-            for it in items:
-                f.write(json.dumps(it.to_dict(), separators=(",", ":")) + "\n")
-        tmp.replace(self._path)
+        """Atomic rewrite: write to a unique tmp file, rename over the real file.
+
+        Unparseable lines are never silently dropped: they are moved to
+        items.jsonl.corrupt so a torn write stays recoverable.
+        """
+        _, bad = self._read_split()
+        if bad:
+            with self._path.with_suffix(".jsonl.corrupt").open("a") as cf:
+                for line in bad:
+                    cf.write(line + "\n")
+        fd, tmp_name = tempfile.mkstemp(
+            dir=self.data_dir, prefix="items.", suffix=".jsonl.tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                for it in items:
+                    f.write(json.dumps(it.to_dict(), separators=(",", ":")) + "\n")
+            os.replace(tmp_name, self._path)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
 
     def _new_id(self) -> str:
         return uuid.uuid4().hex[:12]
@@ -146,10 +183,20 @@ class DocumentsService:
             linked_application_ids=list(linked_application_ids or []),
             notes=notes,
         )
-        with self._path.open("a") as f:
-            f.write(json.dumps(item.to_dict(), separators=(",", ":")) + "\n")
+        with _LEDGER_LOCK:
+            # a crash mid-append can leave the file without a trailing newline;
+            # start on a fresh line so this record is not glued to the torn one
+            lead = ""
+            if self._path.exists() and self._path.stat().st_size > 0:
+                with self._path.open("rb") as rf:
+                    rf.seek(-1, os.SEEK_END)
+                    if rf.read(1) != b"\n":
+                        lead = "\n"
+            with self._path.open("a") as f:
+                f.write(lead + json.dumps(item.to_dict(), separators=(",", ":")) + "\n")
         return item
 
+    @_locked
     def list_all(
         self,
         kind: Optional[str] = None,
@@ -167,12 +214,14 @@ class DocumentsService:
         items.sort(key=lambda i: i.updated_at, reverse=True)
         return items
 
+    @_locked
     def get(self, doc_id: str) -> Document:
         for i in self._read_all():
             if i.id == doc_id:
                 return i
         raise KeyError(doc_id)
 
+    @_locked
     def update(self, doc_id: str, **fields) -> Document:
         """Plain field edits (title, kind, status, tags, notes). No version bump."""
         items = self._read_all()
@@ -195,6 +244,7 @@ class DocumentsService:
                 return it
         raise KeyError(doc_id)
 
+    @_locked
     def bump_version(self, doc_id: str, note: str) -> Document:
         """Snapshot the current draft text into history and bump the number."""
         items = self._read_all()
@@ -209,6 +259,7 @@ class DocumentsService:
                 return it
         raise KeyError(doc_id)
 
+    @_locked
     def delete(self, doc_id: str) -> None:
         items = self._read_all()
         new_items = [i for i in items if i.id != doc_id]
@@ -230,10 +281,27 @@ class DocumentsService:
     @staticmethod
     def _safe_filename(name: str) -> str:
         name = (name or "").strip()
-        if not name or "/" in name or "\\" in name or ".." in name or name.startswith("."):
+        # reject path components, not any substring: "Resume..final.pdf" is fine
+        if (not name or "/" in name or "\\" in name or "\x00" in name
+                or name in (".", "..") or name.startswith(".")):
             raise DocumentsServiceError("invalid filename")
         return name
 
+    MAX_NAME_BYTES = 180  # leaves room for "-N" and the ".uploading" tmp wrapper (NAME_MAX is 255)
+
+    @classmethod
+    def _clamp_filename(cls, name: str) -> str:
+        """Shorten an over-long name (bytes, not chars) while keeping its extension."""
+        if len(name.encode("utf-8")) <= cls.MAX_NAME_BYTES:
+            return name
+        p = Path(name)
+        suffix = p.suffix if len(p.suffix.encode("utf-8")) <= 16 else ""
+        stem = name[: len(name) - len(suffix)] if suffix else name
+        budget = cls.MAX_NAME_BYTES - len(suffix.encode("utf-8"))
+        stem = stem.encode("utf-8")[:budget].decode("utf-8", errors="ignore")
+        return (stem or "file") + suffix
+
+    @_locked
     def attach_file(self, doc_id: str, filename: str, data: bytes) -> Document:
         """Store a file for this document. Name collisions get a numeric suffix.
 
@@ -252,12 +320,15 @@ class DocumentsService:
             raise DocumentsServiceError(
                 f"file too large ({len(data)} bytes; max {self.MAX_FILE_BYTES})"
             )
-        filename = self._safe_filename(filename)
+        filename = self._clamp_filename(self._safe_filename(filename))
         items = self._read_all()
         for it in items:
             if it.id == doc_id:
                 fdir = self._files_dir(doc_id)
-                fdir.mkdir(parents=True, exist_ok=True)
+                try:
+                    fdir.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    raise DocumentsServiceError(f"could not store file: {e.strerror or e}")
                 target = fdir / filename
                 stem, suffix = target.stem, target.suffix
                 n = 1
@@ -265,7 +336,11 @@ class DocumentsService:
                     target = fdir / f"{stem}-{n}{suffix}"
                     n += 1
                 tmp = fdir / f".{target.name}.uploading"
-                tmp.write_bytes(data)
+                try:
+                    tmp.write_bytes(data)
+                except OSError as e:
+                    tmp.unlink(missing_ok=True)
+                    raise DocumentsServiceError(f"could not store file: {e.strerror or e}")
                 it.files.append({
                     "name": target.name,
                     "size": len(data),
@@ -293,6 +368,7 @@ class DocumentsService:
             raise KeyError(filename)
         return p
 
+    @_locked
     def remove_file(self, doc_id: str, filename: str) -> Document:
         filename = self._safe_filename(filename)
         items = self._read_all()
@@ -307,6 +383,7 @@ class DocumentsService:
                 return it
         raise KeyError(doc_id)
 
+    @_locked
     def link(self, doc_id: str, application_id: str) -> Document:
         """Link a document to an application id. Idempotent."""
         items = self._read_all()
@@ -319,6 +396,7 @@ class DocumentsService:
                 return it
         raise KeyError(doc_id)
 
+    @_locked
     def unlink(self, doc_id: str, application_id: str) -> Document:
         """Unlink a document from an application id. Idempotent."""
         items = self._read_all()
@@ -330,3 +408,16 @@ class DocumentsService:
                     self._write_all(items)
                 return it
         raise KeyError(doc_id)
+
+    @_locked
+    def unlink_application_everywhere(self, application_id: str) -> int:
+        """Drop an application id from every document (used when the application is deleted)."""
+        items = self._read_all()
+        n = 0
+        for it in items:
+            if application_id in it.linked_application_ids:
+                it.linked_application_ids = [a for a in it.linked_application_ids if a != application_id]
+                n += 1
+        if n:
+            self._write_all(items)
+        return n

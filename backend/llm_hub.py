@@ -322,18 +322,20 @@ class OllamaBackend(Backend):
                     yield {"delta": piece}
                 if chunk.get("done"):
                     tokens = chunk.get("eval_count", 0) + chunk.get("prompt_eval_count", 0)
-        except (urllib.error.URLError, ConnectionError):
-            # Ollama not installed/running → bundled llama-server fallback,
-            # same policy as chat()/_bundled_chat above.
-            async for ev in self._bundled_chat_stream(messages, t0):
-                yield ev
-            return
         except urllib.error.HTTPError as e:
+            # Must precede URLError: HTTPError subclasses it, and Ollama
+            # being up but rejecting the model is not "Ollama absent".
             try:
                 detail = e.read().decode()[:200].strip()
             except Exception:
                 detail = ""
             yield {"error": f"ollama rejected model {model!r} (HTTP {e.code}): {detail}"}
+            return
+        except (urllib.error.URLError, ConnectionError):
+            # Ollama not installed/running → bundled llama-server fallback,
+            # same policy as chat()/_bundled_chat above.
+            async for ev in self._bundled_chat_stream(messages, t0):
+                yield ev
             return
         elapsed = int((time.time() - t0) * 1000)
         yield {"done": True, "message": {

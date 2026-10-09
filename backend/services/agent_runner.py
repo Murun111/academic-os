@@ -485,14 +485,33 @@ class AgentRunner:
         # fully intact. Persists across the run's iterations.
         allowed_fetch_hosts: set[str] = set()
 
+        # On a critic retry the first pass already executed its side-effecting
+        # calls and queued its escalations on this same run. Remember them so
+        # the corrective pass never repeats them (duplicate inbox items /
+        # duplicate approval cards).
+        def _call_key(name: str, args: Any) -> str:
+            return name + "|" + json.dumps(args, sort_keys=True, default=str)
+
+        _prior_escalations = {
+            _call_key(e.get("tool", ""), e.get("args")) for e in run.escalations
+        }
+        _prior_effects = {
+            _call_key(c.get("tool", ""), c.get("args"))
+            for c in run.tool_calls
+            if not c.get("gate") and c.get("tool") in autonomy._INTERNAL_SET
+        }
+
         # Compose the message history as ChatMessage objects (not raw dicts —
         # the refactored OllamaService.chat() takes list[ChatMessage]).
         # Inject the real date so the model never guesses it (local models have
         # no notion of "today"). Applies to every agent's reasoning + output.
-        _today = time.strftime("%Y-%m-%d", time.gmtime())
-        _hhmm = time.strftime("%H:%M", time.gmtime())
+        _now_local = datetime.now().astimezone()
+        _today = _now_local.strftime("%Y-%m-%d")
+        _hhmm = _now_local.strftime("%H:%M")
+        _tz = _now_local.strftime("%z")
+        _tz = f"UTC{_tz[:3]}:{_tz[3:]}" if _tz else "local"
         _date_ctx = (
-            f"\n\n[Context: today is {_today} (UTC), current time {_hhmm} UTC. "
+            f"\n\n[Context: today is {_today} (local date), current time {_hhmm} {_tz}. "
             f"Use this for all date reasoning; never guess the date.]"
         )
         messages: list[ChatMessage] = [
@@ -624,10 +643,13 @@ class AgentRunner:
                     continue
                 decision = autonomy.classify(tc.name, tc.arguments)
                 if decision.decision != "allow":
-                    run.escalations.append({
-                        "tool": tc.name, "args": tc.arguments,
-                        "decision": decision.decision, "reason": decision.reason,
-                    })
+                    _k = _call_key(tc.name, tc.arguments)
+                    if _k not in _prior_escalations:
+                        run.escalations.append({
+                            "tool": tc.name, "args": tc.arguments,
+                            "decision": decision.decision, "reason": decision.reason,
+                        })
+                        _prior_escalations.add(_k)
                     run.tool_calls.append({
                         "tool": tc.name, "args": tc.arguments,
                         "gate": decision.decision,
@@ -645,7 +667,12 @@ class AgentRunner:
                     continue
 
                 tool = get_tool_by_name(tools, tc.name)
-                if tool is None:
+                if _call_key(tc.name, tc.arguments) in _prior_effects:
+                    tool_result = {
+                        "ok": True, "duplicate": True,
+                        "note": "Already executed earlier in this run; not repeated.",
+                    }
+                elif tool is None:
                     tool_result = {"error": f"unknown tool: {tc.name}"}
                 elif tc.name in ("web.fetch", "browser.fetch") and not _fetch_host_allowed(
                     tc.arguments.get("url", ""), allowed_fetch_hosts

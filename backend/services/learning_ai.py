@@ -13,18 +13,24 @@ from typing import Any, Optional
 from backend.llm_hub import ChatMessage, get_backend, status_all
 
 
+_LOCAL_BACKEND = "ollama"
+
+
 async def _hub_chat(messages: list[ChatMessage]) -> Optional[str]:
-    """Chat via the first online llm_hub backend; None if none is reachable."""
+    """Chat via the LOCAL model only (Ollama or the bundled llama); None if it is not running.
+
+    Student text (notes, syllabi, tutor chats) must never go to a cloud CLI
+    (Codex/Claude/Gemini) without an explicit opt-in, so no other backend is tried.
+    """
     status = await status_all()
-    for name, probe in status.items():
-        if not probe.online:
-            continue
-        backend = get_backend(name)
-        models = probe.models or await backend.models()
-        model_id = models[0].id if models else ""
-        res = await backend.chat(messages, model_id)
-        return res.content
-    return None
+    probe = status.get(_LOCAL_BACKEND)
+    if probe is None or not probe.online:
+        return None
+    backend = get_backend(_LOCAL_BACKEND)
+    models = probe.models or await backend.models()
+    model_id = models[0].id if models else ""
+    res = await backend.chat(messages, model_id)
+    return res.content
 
 
 class LearningAIUnavailable(Exception):
@@ -62,31 +68,53 @@ async def _ai_structured(prompt: str, parse, what: str, attempts: int = 2):
     raise LearningAIBadOutput(f"The AI model returned {what} in an unreadable format. Try again.")
 
 
+def _loads(content: str) -> Optional[Any]:
+    """json.loads tolerant of the usual small-model slips; only list/dict count as a result."""
+    content = content.strip()
+    if not content:
+        return None
+    variants = [content]
+    # Python-style """triple-quoted""" strings (seen from qwen2.5:3b on study guides).
+    fixed = re.sub(r'"""([\s\S]*?)"""', lambda m: json.dumps(m.group(1).strip()), content)
+    if fixed != content:
+        variants.append(fixed)
+    for v in variants:
+        try:
+            # strict=False tolerates raw newlines/tabs inside strings, another common slip.
+            out = json.loads(v, strict=False)
+        except Exception:
+            continue
+        if isinstance(out, (list, dict)):
+            return out
+    return None
+
+
 def _extract_json_block(text: str) -> Optional[Any]:
-    """Extract JSON data from code blocks or raw text."""
-    # Look for ```json ... ``` or ``` ... ```
-    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if match:
-        content = match.group(1).strip()
-    else:
-        content = text.strip()
+    """Extract JSON data from a reply that may be fenced, bare, or wrapped in prose.
 
-    # Small local models sometimes emit Python-style """triple-quoted""" strings
-    # (seen from qwen2.5:3b on study guides); turn them into valid JSON strings.
-    content = re.sub(r'"""([\s\S]*?)"""', lambda m: json.dumps(m.group(1).strip()), content)
-
-    # strict=False tolerates raw newlines/tabs inside strings, another common slip.
-    try:
-        return json.loads(content, strict=False)
-    except Exception:
-        # Try finding the first [ or { to last ] or }
-        first_b = min([i for i in [content.find('['), content.find('{')] if i != -1], default=-1)
-        last_b = max([content.rfind(']'), content.rfind('}')])
-        if first_b != -1 and last_b != -1 and last_b > first_b:
-            try:
-                return json.loads(content[first_b:last_b+1], strict=False)
-            except Exception:
-                pass
+    Candidates are tried from most to least trustworthy. Replies whose strings
+    contain their own ``` fences (code topics) must not be cut at the inner fence,
+    so the whole text and the OUTERMOST fence are tried before any inner one.
+    """
+    text = text.strip()
+    candidates: list[str] = [text]
+    first, last = text.find("```"), text.rfind("```")
+    if first != -1 and last > first:
+        outer = re.sub(r"^```(?:json)?\s*", "", text[first:last + 3])
+        outer = re.sub(r"\s*```$", "", outer)
+        candidates.append(outer)
+    bracket = [i for i in (text.find("["), text.find("{")) if i != -1]
+    end = max(text.rfind("]"), text.rfind("}"))
+    if bracket and end > min(bracket):
+        candidates.append(text[min(bracket):end + 1])
+    # last resort: first non-greedy fence (several separate fenced blocks in prose)
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if m:
+        candidates.append(m.group(1))
+    for c in candidates:
+        out = _loads(c)
+        if out is not None:
+            return out
     return None
 
 

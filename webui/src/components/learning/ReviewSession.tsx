@@ -3,6 +3,7 @@ import { CheckCircle2, RotateCw } from 'lucide-react'
 import {
   learning,
   isUnavailable,
+  isNotFound,
   type Card,
   type SrsRating,
 } from '../../lib/learningApi'
@@ -16,11 +17,12 @@ const RATINGS: { key: string; rating: SrsRating; label: string; hint: string }[]
 ]
 
 function errorMessage(e: unknown, action: string): string {
+  if (isNotFound(e)) return 'This card no longer exists.'
   if (isUnavailable(e)) return `The learning service is not reachable right now. ${action} once it is back.`
   return `Something went wrong. ${action}.`
 }
 
-export function ReviewSession() {
+export function ReviewSession({ active = true }: { active?: boolean } = {}) {
   const [queue, setQueue] = useState<Card[]>([])
   const [total, setTotal] = useState(0)
   const [done, setDone] = useState(0)
@@ -31,6 +33,8 @@ export function ReviewSession() {
   const [showHint, setShowHint] = useState(false)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
+  const doneRef = useRef(0)
+  doneRef.current = done
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -49,9 +53,11 @@ export function ReviewSession() {
     }
   }, [])
 
+  // Load on first show and whenever the tab is shown again, but never throw away
+  // a session that is already in progress.
   useEffect(() => {
-    void load()
-  }, [load])
+    if (active && doneRef.current === 0) void load()
+  }, [active, load])
 
   const current: Card | undefined = queue[0]
 
@@ -72,7 +78,16 @@ export function ReviewSession() {
         setFlipped(false)
         setShowHint(false)
       } catch (e) {
-        setRateError(errorMessage(e, 'Your rating was not saved. Try again'))
+        if (isNotFound(e)) {
+          // deck or card was deleted elsewhere: skip it instead of stranding the session
+          setQueue((q) => q.slice(1))
+          setTotal((t) => Math.max(0, t - 1))
+          setFlipped(false)
+          setShowHint(false)
+          setRateError('That card was deleted elsewhere, so it was skipped.')
+        } else {
+          setRateError(errorMessage(e, 'Your rating was not saved. Try again'))
+        }
       } finally {
         busyRef.current = false
         setBusy(false)
@@ -83,13 +98,15 @@ export function ReviewSession() {
 
   // keyboard: space/enter flips, 1-4 rates (only after flip)
   useEffect(() => {
-    if (!current) return
+    if (!current || !active) return
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
-      const onButton = t?.tagName === 'BUTTON'
-      if ((e.key === ' ' || e.key === 'Enter') && !onButton) {
+      // Enter/Space activate links and buttons (sidebar NavLinks, tabs); only a bare
+      // focus on the page or the card itself flips it.
+      const onInteractive = !!t?.closest?.('a, button, [role="button"], [role="tab"], [role="link"]')
+      if ((e.key === ' ' || e.key === 'Enter') && !onInteractive) {
         e.preventDefault()
         setFlipped(true)
         return
@@ -104,7 +121,7 @@ export function ReviewSession() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [current, flipped, rate])
+  }, [current, flipped, rate, active])
 
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
 

@@ -214,7 +214,8 @@ export function Tour() {
   }, [open, ready, i]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const finish = () => {
-    localStorage.setItem(TOUR_DONE_KEY, '1')
+    // blocked site data makes setItem throw: the overlay must still close
+    try { localStorage.setItem(TOUR_DONE_KEY, '1') } catch { /* storage unavailable */ }
     setTour(false)
     navigate('/')
   }

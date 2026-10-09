@@ -246,13 +246,18 @@ class _Pdf:
         self._scan(data)
 
     def _scan(self, data: bytes) -> None:
-        for m in _OBJ_RE.finditer(data):
+        matches = list(_OBJ_RE.finditer(data))
+        for idx, m in enumerate(matches):
             num = int(m.group(1))
             body_start = m.end()
             sm = re.compile(rb"stream\r?\n").search(data, body_start, body_start + 4096 + 0)
-            em = data.find(b"endobj", body_start)
+            # Bound the endobj search to the next object header. An unbounded
+            # find() rescans the whole tail for every header, which is
+            # quadratic on a crafted 'N 0 obj' flood with no endobj.
+            nxt = matches[idx + 1].start() if idx + 1 < len(matches) else len(data)
+            em = data.find(b"endobj", body_start, nxt)
             if em < 0:
-                em = len(data)
+                em = nxt
             head_end = sm.start() if sm and sm.start() < em else em
             head = data[body_start:head_end]
             stream = None

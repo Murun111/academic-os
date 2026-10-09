@@ -111,3 +111,30 @@ def test_seed_never_overwrites_user_agents(tmp_path, monkeypatch):
     (agents / "my-agent.md").write_text("# mine")
     assert seed_default_agents() == 0
     assert list(agents.glob("*.md")) == [agents / "my-agent.md"]
+
+
+# === sweep regressions (F44) ===
+
+
+def test_very_long_filename_is_clamped_not_500(client):
+    doc = _add_doc(client)
+    r = _upload(client, doc["id"], name="a" * 300 + ".pdf")
+    assert r.status_code == 200, r.text
+    name = r.json()["item"]["files"][0]["name"]
+    assert name.endswith(".pdf") and len(name.encode()) <= 180
+    assert client.get(f"/api/documents/{doc['id']}/files/{name}").status_code == 200
+
+
+def test_long_non_ascii_filename_ok(client):
+    doc = _add_doc(client)
+    r = _upload(client, doc["id"], name="\u0431" * 200 + ".pdf")
+    assert r.status_code == 200, r.text
+
+
+def test_double_dot_inside_name_allowed_but_traversal_rejected(client):
+    doc = _add_doc(client)
+    assert _upload(client, doc["id"], name="Resume..final.pdf").status_code == 200
+    svc = DocumentsService.__new__(DocumentsService)
+    for bad in ("..", ".", "../x", "a/b", ".hidden"):
+        with pytest.raises(DocumentsServiceError):
+            svc._safe_filename(bad)

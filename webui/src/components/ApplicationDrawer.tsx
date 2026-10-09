@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { Archive, ArchiveRestore, Check, Plus, Trash2, X } from 'lucide-react'
 import { documentsApi, type Document } from '../lib/documentsApi'
 import {
-  applicationsApi, APPLICATION_TYPES,
+  applicationsApi, APPLICATION_TYPES, daysUntilDeadline,
   type Application, type ApplicationStatus, type ApplicationType,
 } from '../lib/applicationsApi'
 import { Btn, Mono, Pill } from './ui'
@@ -18,13 +18,12 @@ export const STATUS_LABEL: Record<ApplicationStatus, string> = {
   decision: 'Decision',
 }
 
-function daysUntil(deadline: string): number {
-  return Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000)
-}
+const daysUntil = daysUntilDeadline
 
 export function DeadlineLabel({ deadline }: { deadline: string | null }) {
   if (!deadline) return null
   const days = daysUntil(deadline)
+  if (Number.isNaN(days)) return <Mono className="text-low">{deadline}</Mono>
   const urgent = days < 7
   return (
     <Mono className={urgent ? 'text-fail' : 'text-low'}>

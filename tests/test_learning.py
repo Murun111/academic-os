@@ -377,7 +377,7 @@ async def test_hub_chat_selects_online_backend_and_none_when_offline(monkeypatch
             return NS(content=f"ok:{model_id}")
 
     async def online():
-        return {"a": NS(online=False, models=[]), "b": NS(online=True, models=[NS(id="m1")])}
+        return {"ollama": NS(online=True, models=[NS(id="m1")]), "claude": NS(online=True, models=[NS(id="c1")])}
     monkeypatch.setattr(learning_ai, "status_all", online)
     monkeypatch.setattr(learning_ai, "get_backend", lambda name: FakeBackend())
     assert await learning_ai._hub_chat([]) == "ok:m1"

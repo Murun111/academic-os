@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { HashRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { Backdrop } from './components/Backdrop'
 import { Sidebar } from './components/Sidebar'
@@ -34,14 +34,20 @@ const TITLES: Record<string, string> = {
 }
 
 import { NO_MOTION } from './lib/motion'
+import { stageConfig } from './lib/stageConfig'
+import { trackApplies, trackConfig } from './lib/trackConfig'
 
 function Shell() {
   const boot = useOs((s) => s.boot)
   const location = useLocation()
   useEffect(() => boot(), [boot])
+  const stage = useOs((s) => s.stage)
+  const track = useOs((s) => s.track)
   useEffect(() => {
-    document.title = TITLES[location.pathname] ? `${TITLES[location.pathname]} · Academic OS` : 'Academic OS'
-  }, [location.pathname])
+    const appsTitle = (trackApplies(stage) ? trackConfig(track)?.appsTitle : undefined) ?? stageConfig(stage).appsTitle
+    const t = location.pathname === '/applications' ? appsTitle : TITLES[location.pathname]
+    document.title = t ? `${t} · Academic OS` : 'Academic OS'
+  }, [location.pathname, stage, track])
 
   const routes = (
     <Routes location={location}>
@@ -59,6 +65,8 @@ function Shell() {
       <Route path="/settings" element={<Settings />} />
       <Route path="/export" element={<Export />} />
       <Route path="/act-prep" element={<ActPrep />} />
+      {/* stale bookmark / mistyped deep link: land on the dashboard, not a blank page */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 

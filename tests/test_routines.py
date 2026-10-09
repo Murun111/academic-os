@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -31,7 +32,7 @@ class FakeOllama:
     async def chat(self, messages, tools=None, think=False, model=None):
         self.calls.append(messages)
         if self.fail:
-            raise RuntimeError("ollama unreachable")
+            raise httpx.ConnectError("ollama unreachable")
         return SimpleNamespace(message=SimpleNamespace(content=self.content), model=self.model)
 
 
@@ -290,3 +291,38 @@ def test_post_resume_feedback_503_when_ollama_fails(client):
     app.state.ollama = FakeOllama(fail=True)
     r = c.post("/api/routines/resume-feedback", json={"content": "My resume."})
     assert r.status_code == 503
+
+
+# === sweep regressions (F46, F47) ===
+
+@pytest.mark.parametrize("days", [-5, 0, 91, 999999999])
+def test_deadline_digest_rejects_out_of_range_days(client, days):
+    c, _app = client
+    assert c.get(f"/api/routines/deadline-digest?days={days}").status_code == 422
+
+
+def test_deadline_brief_rejects_out_of_range_days(client):
+    c, _app = client
+    assert c.post("/api/routines/deadline-digest/brief", json={"days": 1000000000000}).status_code == 422
+    assert c.post("/api/routines/deadline-digest/brief", json={"days": -1}).status_code == 422
+
+
+def test_non_connection_model_failure_is_502_not_offline(client):
+    c, app = client
+
+    class Boom(FakeOllama):
+        async def chat(self, messages, **kw):
+            raise ValueError("bad model response")
+
+    app.state.ollama = Boom()
+    r = c.post("/api/routines/essay-feedback", json={"text": "draft"})
+    assert r.status_code == 502
+    assert "offline" not in r.json()["detail"].lower()
+    r = c.post("/api/routines/resume-feedback", json={"content": "cv"})
+    assert r.status_code == 502
+
+
+def test_oversized_essay_rejected(client):
+    c, _app = client
+    r = c.post("/api/routines/essay-feedback", json={"text": "x" * 60_001})
+    assert r.status_code == 422

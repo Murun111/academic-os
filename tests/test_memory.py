@@ -91,6 +91,7 @@ def _patch_mem(
 
     # Index functions — no DB, no Ollama embeddings
     monkeypatch.setattr(mem, "init_db", lambda: None)
+    monkeypatch.setattr(mem, "is_forgotten", lambda _item: False)
 
     returns = list(find_similar_returns) if find_similar_returns is not None else []
     call_state = {"n": 0}
@@ -335,6 +336,7 @@ async def test_consolidate_thread_never_raises_on_backend_failure(monkeypatch):
 
     monkeypatch.setattr(mem, "get_backend", _boom)
     monkeypatch.setattr(mem, "init_db", lambda: None)
+    monkeypatch.setattr(mem, "is_forgotten", lambda _item: False)
     monkeypatch.setattr(mem, "find_similar", lambda item, threshold=0.92: None)
     monkeypatch.setattr(mem, "upsert_item", lambda item: "")
 

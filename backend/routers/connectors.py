@@ -110,6 +110,10 @@ async def canvas_set(body: CanvasCredsBody) -> dict:
     """Save the school's Canvas base URL + the student's personal token, then
     kick off an immediate background sync — the student sees their courses
     without needing to find "Sync now"."""
+    if body.base_url.scheme != "https":
+        return JSONResponse({"error": "insecure_url",
+                             "detail": "Canvas URL must start with https:// (the token would be sent in cleartext)"},
+                            status_code=422)
     token = body.token.strip()
     if len(token) < 8:
         return JSONResponse({"error": "bad_token", "detail": "token looks too short"},

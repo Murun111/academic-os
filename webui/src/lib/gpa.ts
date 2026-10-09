@@ -20,8 +20,11 @@ const SCALE: [number, string, number][] = [
 ]
 
 export function toLetter(pct: number): GradePoint {
+  // Round to the one decimal the UI displays so "93.0%" never sits next to an
+  // A- (raw 92.97 is shown as 93.0%).
+  const shown = Math.round(pct * 10) / 10
   for (const [min, letter, points] of SCALE) {
-    if (pct >= min) return { letter, points }
+    if (shown >= min) return { letter, points }
   }
   return { letter: 'F', points: 0.0 }
 }

@@ -144,3 +144,29 @@ def test_chat_endpoint_injects_house_style_for_every_backend(monkeypatch):
     lowered = first.content.lower()
     assert "emoji" in lowered
     assert "markdown" in lowered
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_unknown_model_instead_of_absent(monkeypatch):
+    """F56: HTTPError subclasses URLError; the stream path must report the
+    model rejection, not fall back to bundled / 'Ollama absent'."""
+    import io
+
+    async def _boom(req, timeout):
+        raise urllib.error.HTTPError(
+            "http://127.0.0.1:11434/api/chat", 404, "Not Found", {},
+            io.BytesIO(b'{"error":"model not found"}'),
+        )
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(OllamaBackend, "_stream_ndjson", staticmethod(_boom))
+
+    async def _must_not_run(self, messages, t0):  # pragma: no cover
+        raise AssertionError("fell back to bundled on HTTP rejection")
+        yield
+
+    monkeypatch.setattr(OllamaBackend, "_bundled_chat_stream", _must_not_run)
+    evs = [e async for e in OllamaBackend().chat_stream(
+        [ChatMessage(role="user", content="hi")], model="nope")]
+    assert len(evs) == 1 and "rejected model" in evs[0]["error"]
+    assert "absent" not in evs[0]["error"]

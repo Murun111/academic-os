@@ -9,12 +9,26 @@ Deleting a course cascades: its assignments are removed too.
 """
 from __future__ import annotations
 
+import functools
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+from backend.services._store_lock import lock_for, unique_tmp
+
+
+def _locked(fn):
+    """Serialise a read-modify-write method against all other writers of the
+    same data dir (sync loops + request threads)."""
+    @functools.wraps(fn)
+    def wrapper(self, *a, **kw):
+        with self._lock:
+            return fn(self, *a, **kw)
+    return wrapper
 
 
 STATUSES = ("todo", "done")
@@ -73,6 +87,7 @@ class CoursesService:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._courses_path = self.data_dir / "courses.jsonl"
         self._assignments_path = self.data_dir / "assignments.jsonl"
+        self._lock = lock_for(self.data_dir / "courses.store")
 
     # === low-level IO ===
 
@@ -101,11 +116,15 @@ class CoursesService:
 
     @staticmethod
     def _write_jsonl(path: Path, items: list) -> None:
-        tmp = path.with_suffix(".jsonl.tmp")
-        with tmp.open("w") as f:
-            for it in items:
-                f.write(json.dumps(it.to_dict(), separators=(",", ":")) + "\n")
-        tmp.replace(path)
+        tmp = unique_tmp(path)
+        try:
+            with tmp.open("w") as f:
+                for it in items:
+                    f.write(json.dumps(it.to_dict(), separators=(",", ":")) + "\n")
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def _write_courses(self, courses: list[Course]) -> None:
         self._write_jsonl(self._courses_path, courses)
@@ -130,6 +149,24 @@ class CoursesService:
         return datetime.now().isoformat(timespec="microseconds")
 
     @staticmethod
+    def _normalize_due(due) -> Optional[str]:
+        """Blank -> None; a date or datetime string -> 'YYYY-MM-DD'; anything
+        else raises ValueError (surfaces as 422 at the API)."""
+        if due is None:
+            return None
+        text = str(due).strip()
+        if not text:
+            return None
+        try:
+            return date.fromisoformat(text).isoformat()
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(text).date().isoformat()
+        except ValueError:
+            raise ValueError(f"invalid due date {due!r}. Use YYYY-MM-DD") from None
+
+    @staticmethod
     def _validate_status(status: str) -> str:
         if status not in STATUSES:
             raise ValueError(f"invalid status {status!r}. Must be one of: {', '.join(STATUSES)}")
@@ -142,6 +179,7 @@ class CoursesService:
         courses.sort(key=lambda c: c.created_at)
         return courses
 
+    @_locked
     def add_course(self, **fields) -> Course:
         name = (fields.get("name") or "").strip()
         term = (fields.get("term") or "").strip()
@@ -162,6 +200,7 @@ class CoursesService:
         self._append_course(course)
         return course
 
+    @_locked
     def update_course(self, course_id: str, **fields) -> Course:
         courses = self._read_courses()
         for c in courses:
@@ -186,6 +225,7 @@ class CoursesService:
                 return c
         raise KeyError(course_id)
 
+    @_locked
     def delete_course(self, course_id: str) -> None:
         courses = self._read_courses()
         remaining = [c for c in courses if c.id != course_id]
@@ -215,6 +255,7 @@ class CoursesService:
         items.sort(key=lambda a: a.created_at)
         return items
 
+    @_locked
     def add_assignment(self, **fields) -> Assignment:
         course_id = fields.get("course_id")
         if not course_id or not self._course_exists(course_id):
@@ -225,7 +266,7 @@ class CoursesService:
         status = self._validate_status(fields.get("status") or "todo")
         grade = fields.get("grade")
         weight = fields.get("weight")
-        due = fields.get("due")
+        due = self._normalize_due(fields.get("due"))
         notes = fields.get("notes") or ""
         assignment = Assignment(
             id=self._new_id(),
@@ -243,6 +284,7 @@ class CoursesService:
         self._append_assignment(assignment)
         return assignment
 
+    @_locked
     def update_assignment(self, assignment_id: str, **fields) -> Assignment:
         items = self._read_assignments()
         for a in items:
@@ -253,7 +295,7 @@ class CoursesService:
                         raise ValueError("title cannot be empty")
                     a.title = title
                 if "due" in fields:
-                    a.due = fields["due"]
+                    a.due = self._normalize_due(fields["due"])
                 if "status" in fields and fields["status"] is not None:
                     a.status = self._validate_status(fields["status"])
                 if "grade" in fields:
@@ -266,6 +308,7 @@ class CoursesService:
                 return a
         raise KeyError(assignment_id)
 
+    @_locked
     def delete_assignment(self, assignment_id: str) -> None:
         items = self._read_assignments()
         remaining = [a for a in items if a.id != assignment_id]
@@ -285,12 +328,17 @@ class CoursesService:
                 continue
             if a.course_id in archived_ids:
                 continue
-            d = date.fromisoformat(a.due)
-            if today <= d <= horizon:
+            try:
+                d = date.fromisoformat(a.due)
+            except (ValueError, TypeError):
+                continue  # legacy/corrupt value: skip it, never crash the aggregate
+            # overdue todo items stay visible until done (no lower bound)
+            if d <= horizon:
                 items.append(a)
         items.sort(key=lambda a: a.due)
         return items
 
+    @_locked
     def set_canvas_score(self, course_id: str, score: Optional[float]) -> None:
         """Store Canvas's computed course total. Canvas-owned — always overwritten
         on sync (unlike per-assignment grades, which are student-protected)."""
@@ -310,8 +358,14 @@ class CoursesService:
         ]
         if not graded:
             return None
-        total_weight = sum(a.weight or 0 for a in graded)
-        if total_weight <= 0:
+        weighted = [a for a in graded if (a.weight or 0) > 0]
+        if not weighted:
             return sum(a.grade for a in graded) / len(graded)
-        weighted_sum = sum(a.grade * (a.weight or 0) for a in graded)
-        return weighted_sum / total_weight
+        # Graded items with NO weight (None; e.g. manually added next to a
+        # syllabus-imported weighted midterm) count at the average weight of
+        # the weighted ones instead of silently dropping out. An explicit 0
+        # stays 0.
+        default_w = sum(a.weight for a in weighted) / len(weighted)
+        weights = [default_w if a.weight is None else max(a.weight, 0) for a in graded]
+        total_weight = sum(weights)
+        return sum(a.grade * w for a, w in zip(graded, weights)) / total_weight

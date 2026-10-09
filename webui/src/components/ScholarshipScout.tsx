@@ -46,9 +46,9 @@ const FAFSA_NOTES =
 
 function nextJune30Iso(): string {
   const now = new Date()
-  const thisYear = new Date(now.getFullYear(), 5, 30)
-  const d = now <= thisYear ? thisYear : new Date(now.getFullYear() + 1, 5, 30)
-  return `${d.getFullYear()}-06-30`
+  // June 30 itself still counts as this year's deadline (compare dates, not instants)
+  const pastDeadlineDay = now.getMonth() > 5 || (now.getMonth() === 5 && now.getDate() > 30)
+  return `${now.getFullYear() + (pastDeadlineDay ? 1 : 0)}-06-30`
 }
 
 // create the FAFSA card with its checklist seeded; returns the created application

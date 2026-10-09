@@ -44,7 +44,7 @@ No schedule yet.
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _make_spec(vault: Path, agent: str, content: str) -> Path:
-    spec_dir = vault / "Agentic OS" / "agents"
+    spec_dir = vault / "agents"
     spec_dir.mkdir(parents=True, exist_ok=True)
     p = spec_dir / f"{agent}.md"
     p.write_text(content)
@@ -75,7 +75,7 @@ async def test_set_schedule_updates_existing_cron(tmp_vault: Path) -> None:
     _make_spec(tmp_vault, "coo", FIXTURE_SPEC)
     result = await admin_mod.set_schedule("coo", schedule="0 8 * * *")
     assert result["ok"] is True
-    content = (tmp_vault / "Agentic OS" / "agents" / "coo.md").read_text()
+    content = (tmp_vault / "agents" / "coo.md").read_text()
     assert 'schedule: "0 8 * * *"' in content
     # original schedule should be gone
     assert '"0 9 * * 1"' not in content
@@ -88,7 +88,7 @@ async def test_set_schedule_empty_removes_schedule_line(tmp_vault: Path) -> None
     _make_spec(tmp_vault, "coo", FIXTURE_SPEC)
     result = await admin_mod.set_schedule("coo", schedule="")
     assert result["ok"] is True
-    content = (tmp_vault / "Agentic OS" / "agents" / "coo.md").read_text()
+    content = (tmp_vault / "agents" / "coo.md").read_text()
     assert "schedule:" not in content
 
 
@@ -99,7 +99,7 @@ async def test_set_schedule_sets_enabled_false(tmp_vault: Path) -> None:
     _make_spec(tmp_vault, "coo", FIXTURE_SPEC)
     result = await admin_mod.set_schedule("coo", enabled=False)
     assert result["ok"] is True
-    content = (tmp_vault / "Agentic OS" / "agents" / "coo.md").read_text()
+    content = (tmp_vault / "agents" / "coo.md").read_text()
     assert "enabled: false" in content
 
 
@@ -112,7 +112,7 @@ async def test_set_schedule_inserts_enabled_when_absent(tmp_vault: Path) -> None
     _make_spec(tmp_vault, "coo", spec)
     result = await admin_mod.set_schedule("coo", enabled=True)
     assert result["ok"] is True
-    content = (tmp_vault / "Agentic OS" / "agents" / "coo.md").read_text()
+    content = (tmp_vault / "agents" / "coo.md").read_text()
     assert "enabled: true" in content
 
 
@@ -121,7 +121,7 @@ async def test_set_schedule_inserts_enabled_when_absent(tmp_vault: Path) -> None
 @pytest.mark.asyncio
 async def test_set_schedule_missing_agent_returns_error(tmp_vault: Path) -> None:
     # Agents dir exists but the file does not
-    (tmp_vault / "Agentic OS" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_vault / "agents").mkdir(parents=True, exist_ok=True)
     result = await admin_mod.set_schedule("ghost_agent")
     assert result["ok"] is False
     assert result["error"] == "agent not found"
@@ -133,7 +133,7 @@ async def test_set_schedule_missing_agent_returns_error(tmp_vault: Path) -> None
 async def test_set_schedule_preserves_body(tmp_vault: Path) -> None:
     _make_spec(tmp_vault, "coo", FIXTURE_SPEC)
     await admin_mod.set_schedule("coo", schedule="0 8 * * *")
-    content = (tmp_vault / "Agentic OS" / "agents" / "coo.md").read_text()
+    content = (tmp_vault / "agents" / "coo.md").read_text()
     assert "# COO Agent" in content
     assert "Produces the daily brief." in content
 

@@ -290,3 +290,118 @@ def test_costs_route_not_shadowed_by_id_route(client):
     assert body["potential_awards"] == 0
     assert body["won_awards"] == 0
     assert body["by_type"] == {}
+
+
+# === bug sweep regressions (F1-F11) ===
+
+
+def test_concurrent_updates_do_not_lose_edits_or_crash(tmp_path):
+    import threading
+    from backend.services.applications import ApplicationsService
+
+    svc = ApplicationsService(tmp_path / "c")
+    errors = []
+    for _ in range(30):
+        it = svc.add(name="X", type="grad")
+
+        def a():
+            try:
+                svc.update(it.id, notes="n")
+            except Exception as e:  # pragma: no cover
+                errors.append(e)
+
+        def b():
+            try:
+                svc.update(it.id, url="u")
+            except Exception as e:  # pragma: no cover
+                errors.append(e)
+
+        ts = [threading.Thread(target=a), threading.Thread(target=b)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        got = svc.get(it.id)
+        assert (got.notes, got.url) == ("n", "u")
+    assert errors == []
+
+
+def test_concurrent_adds_and_updates_keep_every_record(tmp_path):
+    import threading
+    from backend.services.applications import ApplicationsService
+
+    svc = ApplicationsService(tmp_path / "c2")
+    base = svc.add(name="base", type="grad")
+
+    def adder():
+        for i in range(30):
+            svc.add(name=f"n{i}", type="grad")
+
+    def updater():
+        for i in range(30):
+            svc.update(base.id, notes=str(i))
+
+    ts = [threading.Thread(target=adder), threading.Thread(target=updater)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(svc.list_all()) == 31
+
+
+def test_deadline_can_be_cleared(client):
+    r = _create(client, deadline="2026-12-01").json()["item"]
+    p = client.patch(f"/api/applications/{r['id']}", json={"deadline": None})
+    assert p.status_code == 200
+    assert client.get(f"/api/applications/{r['id']}").json()["item"]["deadline"] is None
+
+
+@pytest.mark.parametrize("bad", ["next friday", "Dec 1", "2026-13-45", "2026-10-09T23:59:00"])
+def test_bad_deadline_rejected_on_post_and_patch(client, bad):
+    assert _create(client, deadline=bad).status_code == 422
+    ok = _create(client, deadline="2026-12-01").json()["item"]
+    assert client.patch(f"/api/applications/{ok['id']}", json={"deadline": bad}).status_code == 422
+
+
+def test_costs_won_awards_and_archived_fees(client):
+    college = _create(client, type="undergrad", amount=50000, status="decision",
+                      decision_result="accepted").json()["item"]
+    sch = _create(client, name="S", type="scholarship", amount=10000, awarded_amount=2000,
+                  status="decision", decision_result="accepted").json()["item"]
+    assert client.get("/api/applications/costs").json()["won_awards"] == 2000
+    client.patch(f"/api/applications/{sch['id']}", json={"status": "interview"})
+    assert client.get("/api/applications/costs").json()["won_awards"] == 0
+    arch = _create(client, name="A", app_fee=90).json()["item"]
+    assert client.get("/api/applications/costs").json()["fees_due"] == 90
+    client.patch(f"/api/applications/{arch['id']}", json={"archived": True})
+    assert client.get("/api/applications/costs").json()["fees_due"] == 0
+
+
+def test_csv_header_variants_and_ignored_column_warning(client):
+    csv_text = "Scholarship Name,Application Deadline,Award Amount (USD),Provider,Weird\nRotary,2026-12-01,5000,Rotary Club,x\n"
+    r = client.post("/api/applications/scholarships/import-csv?dry_run=true", content=csv_text,
+                    headers={"content-type": "text/csv"}).json()
+    row = r["rows"][0]
+    assert row["deadline"] == "2026-12-01" and row["amount"] == 5000 and row["org"] == "Rotary Club"
+    assert any("Weird" in w["message"] for w in r["warnings"])
+
+
+def test_csv_nan_amount_rejected(client):
+    r = client.post("/api/applications/scholarships/import-csv",
+                    content="name,amount\nA,nan\nB,inf\n", headers={"content-type": "text/csv"}).json()
+    assert r["created"] == 0 and len(r["errors"]) == 2
+
+
+def test_malformed_line_preserved_and_append_after_missing_newline(tmp_path):
+    from backend.services.applications import ApplicationsService
+
+    svc = ApplicationsService(tmp_path / "m")
+    a = svc.add(name="a", type="grad")
+    with svc._path.open("a") as f:
+        f.write('{"id": "zzz", "name": "trunc')  # cut-off, no newline
+    b = svc.add(name="b", type="grad")
+    assert {i.id for i in svc.list_all()} == {a.id, b.id}
+    svc.update(a.id, notes="x")
+    assert "zzz" in svc._path.read_text()
+
+
+def test_deadlines_days_bounded(client):
+    assert client.get("/api/applications/deadlines?days=1000000000").status_code == 422
+    assert client.get("/api/applications/deadlines?days=-5").status_code == 422
+    assert client.get("/api/applications/deadlines?days=365").status_code == 200

@@ -107,6 +107,9 @@ class OllamaService:
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None):
         self.base_url = base_url or _default_base_url()
         self.model = model or _default_model()
+        # Only the built-in default may be swapped for another installed model;
+        # an explicit ctor arg or OLLAMA_DEFAULT_MODEL is the user's choice.
+        self._model_is_default = not model and not os.environ.get("OLLAMA_DEFAULT_MODEL")
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -119,15 +122,27 @@ class OllamaService:
             await self._client.aclose()
             self._client = None
 
+    def _pick_installed(self, names: set[str]) -> Optional[str]:
+        """The model to use given what Ollama has installed: the configured
+        one if present, else (built-in default only) the first chat model."""
+        if self.model in names:
+            return self.model
+        if self._model_is_default:
+            for n in sorted(names):
+                if "embed" not in n.lower():
+                    return n
+        return None
+
+    async def _installed_names(self) -> set[str]:
+        client = await self._get_client()
+        r = await client.get("/api/tags", timeout=5.0)
+        r.raise_for_status()
+        return {m["name"] for m in r.json().get("models", [])}
+
     async def health(self) -> bool:
-        """True if Ollama has the model, OR the bundled llama-server is up."""
+        """True if Ollama has a usable model, OR the bundled llama-server is up."""
         try:
-            client = await self._get_client()
-            r = await client.get("/api/tags", timeout=5.0)
-            r.raise_for_status()
-            data = r.json()
-            names = {m["name"] for m in data.get("models", [])}
-            if self.model in names:
+            if self._pick_installed(await self._installed_names()):
                 return True
         except (httpx.HTTPError, httpx.RequestError, KeyError):
             pass
@@ -190,8 +205,21 @@ class OllamaService:
         if json_mode:
             payload["format"] = "json"
         try:
-            r = await client.post("/api/chat", json=payload)
-            r.raise_for_status()
+            try:
+                r = await client.post("/api/chat", json=payload)
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Built-in default model not installed but Ollama is up with
+                # others: use one of those instead of failing the call.
+                if e.response.status_code != 404 or model or not self._model_is_default:
+                    raise
+                picked = self._pick_installed(await self._installed_names())
+                if not picked or picked == use_model:
+                    raise
+                self.model = use_model = picked
+                payload["model"] = picked
+                r = await client.post("/api/chat", json=payload)
+                r.raise_for_status()
             data = r.json()
         except (httpx.ConnectError, httpx.ConnectTimeout):
             # Ollama not installed/running → bundled llama-server fallback.

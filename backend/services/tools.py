@@ -149,6 +149,11 @@ async def vault_read(path: str) -> dict:
     if _is_within(full, connectors_dir):
         return {"error": "forbidden", "path": path,
                 "detail": "credential files are not readable by agents"}
+    # Pre-restore snapshots are full copies of the data root (older ones may
+    # hold credentials) — never agent-readable.
+    if _is_within(full, _realpath(vault_root / "pre-restore-snapshots")):
+        return {"error": "forbidden", "path": path,
+                "detail": "restore snapshots are not readable by agents"}
     if not full.exists():
         return {"error": "not_found", "path": path}
     return {"path": path, "content": full.read_text()}
@@ -218,6 +223,9 @@ async def vault_write(path: str, content: str) -> dict:
     if _is_within(full, data_dir):
         return {"error": "forbidden", "path": path,
                 "detail": "the data/ directory is not writable by agents"}
+    if _is_within(full, _realpath(vault_root / "pre-restore-snapshots")):
+        return {"error": "forbidden", "path": path,
+                "detail": "restore snapshots are not writable by agents"}
     # Disallow agents/ — AgentLoader reads specs here and the scheduler
     # cron-runs them. A generic file write must never mint or rewrite an agent
     # spec (its tools:, prompt, schedule); that path is _ALWAYS_GATED only.

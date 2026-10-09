@@ -33,7 +33,9 @@ ASSIGNMENTS_JSON = {
 
 
 class FakeResponse:
-    def __init__(self, payload): self._payload = payload
+    def __init__(self, payload, links=None):
+        self._payload = payload
+        self.links = links or {}
     def raise_for_status(self): pass
     def json(self): return self._payload
 
@@ -60,9 +62,48 @@ def services(tmp_path, monkeypatch):
     return canvas, courses
 
 
-def test_iso_date():
-    assert _iso_date("2026-09-15T23:59:00Z") == "2026-09-15"
-    assert _iso_date(None) is None
+def test_iso_date(monkeypatch):
+    import time
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    try:
+        # 11:59pm Eastern on the 15th is 03:59Z on the 16th
+        assert _iso_date("2026-09-16T03:59:00Z") == "2026-09-15"
+        assert _iso_date("2026-09-16T03:59:00-04:00") == "2026-09-16"
+        assert _iso_date("2026-09-15") == "2026-09-15"
+        assert _iso_date(None) is None
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+
+@pytest.mark.asyncio
+async def test_get_all_pages_follows_link_header_same_host_only():
+    from backend.services.canvas_sync import _get_all_pages
+
+    calls = []
+
+    class C:
+        async def get(self, url, params=None):
+            calls.append((url, params))
+            if url.endswith("/a"):
+                return FakeResponse([1], {"next": {"url": "https://s.example.com/p2"}})
+            if url.endswith("/p2"):
+                return FakeResponse([2], {"next": {"url": "https://evil.example.org/p3"}})
+            raise AssertionError(url)
+
+    out = await _get_all_pages(C(), "https://s.example.com/a", {"per_page": 50})
+    assert out == [1, 2]
+    assert calls[1][1] is None  # next links carry their own query
+
+
+def test_canvas_rejects_http_base_url(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    reset_services()
+    c = TestClient(app)
+    r = c.post("/api/connectors/canvas", json={"base_url": "http://school.instructure.com", "token": "tok_1234567890"})
+    assert r.status_code == 422
 
 
 def test_masked_config_never_leaks_token(tmp_path):

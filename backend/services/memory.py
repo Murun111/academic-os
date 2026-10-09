@@ -14,6 +14,7 @@ See: docs/specs/phase-1.1-memory-consolidation.md §Module C
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ from datetime import datetime, timezone
 
 from backend.llm_hub import ChatMessage, get_backend
 from backend.llm_hub import get_thread as _llm_get_thread
-from backend.services.memory_index import find_similar, init_db, upsert_item
+from backend.services.memory_index import find_similar, init_db, is_forgotten, upsert_item
 from backend.services.memory_types import MEMORY_KINDS, ConsolidationResult, MemoryItem
 from backend.services.memory_writer import file_item, normalize_tag
 
@@ -249,7 +250,7 @@ async def consolidate_thread(thread: dict) -> ConsolidationResult:
     thread_id = str(thread.get("id", ""))
     try:
         items = await extract_items(thread)
-        init_db()
+        await asyncio.to_thread(init_db)  # sqlite + embedding calls block: keep off the event loop
 
         filed_items: list[MemoryItem] = []
         written_paths: list[str] = []
@@ -257,12 +258,14 @@ async def consolidate_thread(thread: dict) -> ConsolidationResult:
         skipped_duplicates = 0
 
         for item in items:
-            dup = find_similar(item)
+            if await asyncio.to_thread(is_forgotten, item):
+                continue
+            dup = await asyncio.to_thread(find_similar, item)
             if dup is not None:
                 skipped_duplicates += 1
                 continue
 
-            upsert_item(item)
+            await asyncio.to_thread(upsert_item, item)
             path = await file_item(item)
             filed_items.append(item)
             if path not in seen_paths:

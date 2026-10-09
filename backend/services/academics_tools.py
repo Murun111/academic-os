@@ -60,6 +60,15 @@ async def add_application(
         return {"error": "name_required"}
     if type not in APPLICATION_TYPES:
         return {"error": "bad_type", "allowed": list(APPLICATION_TYPES)}
+    deadline = (deadline or "").strip() or None
+    if deadline:
+        try:
+            from datetime import date
+            date.fromisoformat(deadline)
+        except ValueError:
+            return {"error": "bad_deadline",
+                    "detail": "deadline must be ISO YYYY-MM-DD (or omitted)",
+                    "got": deadline}
     item = _apps().add(
         name=name, type=type, deadline=deadline or None, org=org or "",
         url=url or "", notes=(notes or "") + "\n[agent-found — verify deadline on the official page]",

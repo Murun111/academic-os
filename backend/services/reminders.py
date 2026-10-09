@@ -53,6 +53,9 @@ async def create_reminder(
             "    set hours of dueDate to 9",
             "    set minutes of dueDate to 0",
             "    set seconds of dueDate to 0",
+            # Day 1 first: setting month on the 29th-31st would otherwise
+            # overflow into the following month before the real day is set.
+            "    set day of dueDate to 1",
             f"    set year of dueDate to {year}",
             f"    set month of dueDate to {month}",
             f"    set day of dueDate to {day}",

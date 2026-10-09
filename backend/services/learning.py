@@ -5,8 +5,11 @@ and Deep Work sessions with local JSON/JSONL persistence.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
+import tempfile
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +24,23 @@ from backend.services.srs_engine import (
 
 class LearningServiceError(Exception):
     pass
+
+
+class LearningValidationError(LearningServiceError):
+    """Bad input (blank title, empty card side); routers map this to 422, not 404."""
+
+
+# Sync routes run in the threadpool and every mutation is read-all/modify/write-all,
+# so all public service methods serialise on one re-entrant lock.
+_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 class LearningService:
@@ -49,11 +69,18 @@ class LearningService:
         return items
 
     def _write_jsonl(self, path: Path, items: list[dict[str, Any]]) -> None:
-        tmp_path = path.with_suffix(".tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            for item in items:
-                f.write(json.dumps(item, ensure_ascii=False) + "\n")
-        os.replace(tmp_path, path)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.stem + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                for item in items:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     def _read_json(self, path: Path, default: Any) -> Any:
         if not path.exists():
@@ -65,12 +92,20 @@ class LearningService:
             return default
 
     def _write_json(self, path: Path, data: Any) -> None:
-        tmp_path = path.with_suffix(".tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, path)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.stem + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     # ── Flashcards & Decks ─────────────────────────────────────────────
+    @_locked
     def list_decks(self, course_id: Optional[str] = None) -> list[dict[str, Any]]:
         decks = self._read_jsonl(self.decks_file)
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -88,6 +123,7 @@ class LearningService:
             })
         return res
 
+    @_locked
     def get_deck(self, deck_id: str) -> dict[str, Any]:
         decks = self._read_jsonl(self.decks_file)
         for d in decks:
@@ -102,6 +138,7 @@ class LearningService:
                 }
         raise LearningServiceError(f"Deck not found: {deck_id}")
 
+    @_locked
     def create_deck(
         self,
         title: str,
@@ -111,6 +148,8 @@ class LearningService:
         tags: Optional[list[str]] = None,
         cards: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
+        if not (title or "").strip():
+            raise LearningValidationError("Deck title is required")
         decks = self._read_jsonl(self.decks_file)
         deck_id = f"deck_{uuid.uuid4().hex[:8]}"
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -150,14 +189,23 @@ class LearningService:
             "due_cards": len(formatted_cards),
         }
 
+    @_locked
     def update_deck(self, deck_id: str, **fields: Any) -> dict[str, Any]:
         decks = self._read_jsonl(self.decks_file)
         found = None
         for i, d in enumerate(decks):
             if d.get("id") == deck_id:
                 for k, v in fields.items():
-                    if v is not None:
-                        d[k] = v
+                    if k == "title":
+                        if v is None:
+                            continue
+                        v = v.strip()
+                        if not v:
+                            raise LearningValidationError("Deck title is required")
+                    elif v is None and k in ("description", "tags"):
+                        continue
+                    # course_id / course_name may be cleared with an explicit null
+                    d[k] = v
                 d["updated_at"] = datetime.now(timezone.utc).isoformat()
                 decks[i] = d
                 found = d
@@ -167,6 +215,7 @@ class LearningService:
         self._write_jsonl(self.decks_file, decks)
         return found
 
+    @_locked
     def delete_deck(self, deck_id: str) -> None:
         decks = self._read_jsonl(self.decks_file)
         new_decks = [d for d in decks if d.get("id") != deck_id]
@@ -174,7 +223,10 @@ class LearningService:
             raise LearningServiceError(f"Deck not found: {deck_id}")
         self._write_jsonl(self.decks_file, new_decks)
 
+    @_locked
     def add_card(self, deck_id: str, front: str, back: str, hint: str = "", explanation: str = "", tags: Optional[list[str]] = None) -> dict[str, Any]:
+        if not front.strip() or not back.strip():
+            raise LearningValidationError("A card needs both a front and a back")
         decks = self._read_jsonl(self.decks_file)
         found = None
         for d in decks:
@@ -200,6 +252,38 @@ class LearningService:
         self._write_jsonl(self.decks_file, decks)
         return found
 
+    @_locked
+    def add_cards(self, deck_id: str, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Append many cards in one read-modify-write; all or nothing."""
+        clean = []
+        for c in cards:
+            front, back = str(c.get("front", "")).strip(), str(c.get("back", "")).strip()
+            if not front or not back:
+                raise LearningValidationError("A card needs both a front and a back")
+            clean.append((front, back, c))
+        decks = self._read_jsonl(self.decks_file)
+        deck = next((d for d in decks if d.get("id") == deck_id), None)
+        if deck is None:
+            raise LearningServiceError(f"Deck not found: {deck_id}")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        added = []
+        for front, back, c in clean:
+            added.append({
+                "id": f"card_{uuid.uuid4().hex}",
+                "front": front,
+                "back": back,
+                "hint": str(c.get("hint") or "").strip(),
+                "explanation": str(c.get("explanation") or "").strip(),
+                "tags": c.get("tags") or [],
+                "srs": initial_srs_state(),
+                "created_at": now_iso,
+            })
+        deck.setdefault("cards", []).extend(added)
+        deck["updated_at"] = now_iso
+        self._write_jsonl(self.decks_file, decks)
+        return added
+
+    @_locked
     def delete_card(self, deck_id: str, card_id: str) -> None:
         decks = self._read_jsonl(self.decks_file)
         found = False
@@ -216,7 +300,8 @@ class LearningService:
             raise LearningServiceError(f"Card {card_id} or Deck {deck_id} not found")
         self._write_jsonl(self.decks_file, decks)
 
-    def get_due_cards(self, deck_id: Optional[str] = None) -> list[dict[str, Any]]:
+    @_locked
+    def get_due_cards(self, deck_id: Optional[str] = None, limit: Optional[int] = None) -> list[dict[str, Any]]:
         decks = self._read_jsonl(self.decks_file)
         now_iso = datetime.now(timezone.utc).isoformat()
         due_cards = []
@@ -233,8 +318,13 @@ class LearningService:
                         "deck_title": d.get("title"),
                         "course_name": d.get("course_name"),
                     })
+        if limit is not None and limit >= 0:
+            # most overdue first, so a capped session still clears the oldest backlog
+            due_cards.sort(key=lambda c: (c.get("srs") or {}).get("next_review") or "")
+            return due_cards[:limit]
         return due_cards
 
+    @_locked
     def submit_card_review(self, deck_id: str, card_id: str, rating: Rating) -> dict[str, Any]:
         decks = self._read_jsonl(self.decks_file)
         updated_card = None
@@ -260,12 +350,14 @@ class LearningService:
         return updated_card
 
     # ── Quizzes & Assessments ──────────────────────────────────────────
+    @_locked
     def list_quizzes(self, course_id: Optional[str] = None) -> list[dict[str, Any]]:
         quizzes = self._read_jsonl(self.quizzes_file)
         if course_id:
             return [q for q in quizzes if q.get("course_id") == course_id]
         return quizzes
 
+    @_locked
     def get_quiz(self, quiz_id: str) -> dict[str, Any]:
         quizzes = self._read_jsonl(self.quizzes_file)
         for q in quizzes:
@@ -273,6 +365,7 @@ class LearningService:
                 return q
         raise LearningServiceError(f"Quiz not found: {quiz_id}")
 
+    @_locked
     def create_quiz(
         self,
         title: str,
@@ -297,7 +390,7 @@ class LearningService:
                     "options": q.get("options", []),
                     "correct_answer": q.get("correct_answer", ""),
                     "explanation": q.get("explanation", ""),
-                    "concept": q.get("concept", topic),
+                    "concept": (q.get("concept") or "").strip() or topic.strip(),
                 })
 
         new_quiz = {
@@ -317,6 +410,7 @@ class LearningService:
         self._write_jsonl(self.quizzes_file, quizzes)
         return new_quiz
 
+    @_locked
     def delete_quiz(self, quiz_id: str) -> None:
         quizzes = self._read_jsonl(self.quizzes_file)
         new_quizzes = [q for q in quizzes if q.get("id") != quiz_id]
@@ -324,6 +418,7 @@ class LearningService:
             raise LearningServiceError(f"Quiz not found: {quiz_id}")
         self._write_jsonl(self.quizzes_file, new_quizzes)
 
+    @_locked
     def submit_quiz_attempt(
         self,
         quiz_id: str,
@@ -371,10 +466,11 @@ class LearningService:
                 "concept": question.get("concept"),
             })
 
-            # Update topic mastery automatically
-            if question.get("concept"):
+            # Update topic mastery automatically (older quizzes may hold an empty concept)
+            concept = (question.get("concept") or "").strip() or (target.get("topic") or "").strip()
+            if concept:
                 self.record_topic_result(
-                    topic=question.get("concept"),
+                    topic=concept,
                     course_id=target.get("course_id"),
                     course_name=target.get("course_name"),
                     is_correct=is_correct,
@@ -401,6 +497,7 @@ class LearningService:
         return attempt
 
     # ── Concept Mastery Matrix ─────────────────────────────────────────
+    @_locked
     def get_mastery_matrix(self) -> dict[str, Any]:
         default_data = {"topics": [], "overall_mastery": 0}
         data = self._read_json(self.mastery_file, default_data)
@@ -411,6 +508,7 @@ class LearningService:
             data["overall_mastery"] = round(total_points / len(topics))
         return data
 
+    @_locked
     def record_topic_result(self, topic: str, course_id: Optional[str], course_name: Optional[str], is_correct: bool) -> None:
         data = self.get_mastery_matrix()
         topics = data.get("topics", [])
@@ -441,6 +539,15 @@ class LearningService:
             target["correct_count"] = target.get("correct_count", 0) + 1
         target["last_practiced"] = now_iso
 
+        # A status the user set by hand holds until 3 quiz answers have come in since.
+        if target.get("manual_status"):
+            since = target["attempts_count"] - target.get("manual_at_attempts", 0)
+            if since < 3:
+                data["topics"] = topics
+                self._write_json(self.mastery_file, data)
+                return
+            target["manual_status"] = False
+
         # calculate status from accuracy
         acc = target["correct_count"] / target["attempts_count"]
         if target["attempts_count"] >= 3:
@@ -458,6 +565,7 @@ class LearningService:
         data["topics"] = topics
         self._write_json(self.mastery_file, data)
 
+    @_locked
     def set_topic_status(self, topic_id: str, status: str) -> dict[str, Any]:
         if status not in ["needs_review", "developing", "proficient", "mastered"]:
             raise LearningServiceError("Invalid status")
@@ -467,6 +575,8 @@ class LearningService:
         for t in topics:
             if t.get("id") == topic_id:
                 t["status"] = status
+                t["manual_status"] = True
+                t["manual_at_attempts"] = t.get("attempts_count", 0)
                 t["last_practiced"] = datetime.now(timezone.utc).isoformat()
                 found = t
                 break
@@ -476,6 +586,7 @@ class LearningService:
         self._write_json(self.mastery_file, data)
         return found
 
+    @_locked
     def add_topic(self, name: str, course_id: Optional[str] = None, course_name: Optional[str] = None, status: str = "developing") -> dict[str, Any]:
         data = self.get_mastery_matrix()
         topics = data.get("topics", [])
@@ -490,18 +601,23 @@ class LearningService:
             "correct_count": 0,
             "last_practiced": now_iso,
         }
+        if status != "developing":
+            topic["manual_status"] = True
+            topic["manual_at_attempts"] = 0
         topics.append(topic)
         data["topics"] = topics
         self._write_json(self.mastery_file, data)
         return topic
 
     # ── High-Yield Study Guides ────────────────────────────────────────
+    @_locked
     def list_guides(self, course_id: Optional[str] = None) -> list[dict[str, Any]]:
         guides = self._read_jsonl(self.guides_file)
         if course_id:
             return [g for g in guides if g.get("course_id") == course_id]
         return guides
 
+    @_locked
     def get_guide(self, guide_id: str) -> dict[str, Any]:
         guides = self._read_jsonl(self.guides_file)
         for g in guides:
@@ -509,6 +625,7 @@ class LearningService:
                 return g
         raise LearningServiceError(f"Study guide not found: {guide_id}")
 
+    @_locked
     def create_guide(
         self,
         title: str,
@@ -540,6 +657,7 @@ class LearningService:
         self._write_jsonl(self.guides_file, guides)
         return guide
 
+    @_locked
     def delete_guide(self, guide_id: str) -> None:
         guides = self._read_jsonl(self.guides_file)
         new_guides = [g for g in guides if g.get("id") != guide_id]
@@ -548,9 +666,11 @@ class LearningService:
         self._write_jsonl(self.guides_file, new_guides)
 
     # ── Deep Work & Focus Sessions ─────────────────────────────────────
+    @_locked
     def list_focus_sessions(self) -> list[dict[str, Any]]:
         return self._read_jsonl(self.focus_file)
 
+    @_locked
     def log_focus_session(
         self,
         duration_minutes: int,
@@ -560,6 +680,8 @@ class LearningService:
         course_id: Optional[str] = None,
         course_name: Optional[str] = None,
     ) -> dict[str, Any]:
+        if not (0 < duration_minutes <= 1440):
+            raise LearningValidationError("duration_minutes must be between 1 and 1440")
         sessions = self._read_jsonl(self.focus_file)
         session_id = f"focus_{uuid.uuid4().hex[:8]}"
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -578,6 +700,7 @@ class LearningService:
         return session
 
     # ── Overview & Aggregated Analytics ────────────────────────────────
+    @_locked
     def get_overview(self) -> dict[str, Any]:
         decks = self.list_decks()
         quizzes = self.list_quizzes()

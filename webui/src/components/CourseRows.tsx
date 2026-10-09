@@ -142,7 +142,7 @@ export function AssignmentRow({
   onToggleStatus: (a: Assignment) => void
   onTitleCommit: (a: Assignment, title: string) => void
   onDueCommit: (a: Assignment, due: string | null) => void
-  onGradeCommit: (a: Assignment, grade: number | null) => void
+  onGradeCommit: (a: Assignment, grade: number | null) => void | Promise<boolean>
   onDelete: (a: Assignment) => void
 }) {
   const [gradeDraft, setGradeDraft] = useState(a.grade == null ? '' : String(a.grade))
@@ -180,9 +180,17 @@ export function AssignmentRow({
         onChange={(e) => setGradeDraft(e.target.value)}
         onBlur={() => {
           const trimmed = gradeDraft.trim()
+          const saved = a.grade == null ? '' : String(a.grade)
+          // Empty clears the grade; anything non-numeric or outside 0-100
+          // reverts to the saved value instead of wiping it or sending a 422.
           const parsed = trimmed === '' ? null : Number(trimmed)
-          const next = parsed === null || Number.isNaN(parsed) ? null : parsed
-          if (next !== a.grade) onGradeCommit(a, next)
+          if (parsed !== null && (Number.isNaN(parsed) || parsed < 0 || parsed > 100)) {
+            setGradeDraft(saved)
+            return
+          }
+          if (parsed !== a.grade) {
+            void Promise.resolve(onGradeCommit(a, parsed)).then((ok) => { if (ok === false) setGradeDraft(saved) })
+          }
         }}
         placeholder="grade"
         className="w-[56px] shrink-0 rounded-md border border-line bg-raise2 px-1.5 py-1 text-right font-mono text-[11px] text-hi outline-none placeholder:text-low"

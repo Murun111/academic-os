@@ -155,7 +155,18 @@ def _run_job() -> None:
         tmp_dir = tempfile.mkdtemp(prefix="academic-os-update-")
 
         # 1. fetch latest release, pick the dmg asset
-        asset_url = _fetch_asset_url()
+        asset_url, tag = _fetch_release_asset()
+
+        # 1b. cheap pre-check: the release tag already tells us when there is
+        # nothing newer, so don't download a ~100MB DMG just to find out. (The
+        # signed bundle's own version stays the install gate, below.)
+        tag_ver = _numeric_version(tag)
+        cur_ver = _numeric_version(APP_VERSION)
+        if tag_ver is not None and cur_ver is not None and tag_ver <= cur_ver:
+            _set(state="idle", pct=None, error_kind=None,
+                 message="You're already on the latest version.",
+                 available_version=None)
+            return
 
         # 2. download with progress
         _set(state="downloading", pct=0.0)
@@ -201,7 +212,22 @@ def _run_job() -> None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _numeric_version(v: str | None) -> tuple[int, ...] | None:
+    """'v1.2.3' / '1.2.3' -> (1, 2, 3); None when not a plain dotted number."""
+    if not v:
+        return None
+    try:
+        return tuple(int(x) for x in v.strip().lstrip("vV").split("."))
+    except ValueError:
+        return None
+
+
 def _fetch_asset_url() -> str:
+    return _fetch_release_asset()[0]
+
+
+def _fetch_release_asset() -> tuple[str, str | None]:
+    """(dmg download url, release tag_name) of the latest GitHub release."""
     url = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
     try:
         r = httpx.get(url, timeout=GITHUB_TIMEOUT, headers={"Accept": "application/vnd.github+json"})
@@ -221,7 +247,7 @@ def _fetch_asset_url() -> str:
                         "network_error",
                         "The update asset URL was not https and was refused.",
                     )
-                return download_url
+                return download_url, release.get("tag_name")
     raise UpdateError("network_error", "No installer found in the latest release.")
 
 

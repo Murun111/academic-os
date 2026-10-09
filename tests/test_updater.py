@@ -227,8 +227,8 @@ def test_run_job_happy_path_reaches_restarting_and_relaunches_once(monkeypatch, 
     from actually exiting while still verifying it fires."""
     relaunch_calls = []
 
-    monkeypatch.setattr(updater, "_fetch_asset_url",
-                        lambda: "https://example.com/AcademicOS.dmg")
+    monkeypatch.setattr(updater, "_fetch_release_asset",
+                        lambda: ("https://example.com/AcademicOS.dmg", "v99.0.0"))
     monkeypatch.setattr(updater, "_download", lambda url, dest: None)
     monkeypatch.setattr(updater, "_hdiutil_attach", lambda dmg: "/Volumes/FakeOS")
     monkeypatch.setattr(updater, "_locate_app",
@@ -300,8 +300,8 @@ def test_install_failure_rolls_back_original_and_job_ends_in_error(monkeypatch, 
     monkeypatch.setattr(updater.subprocess, "run", fake_run)
 
     # All steps before _install are mocked to succeed.
-    monkeypatch.setattr(updater, "_fetch_asset_url",
-                        lambda: "https://example.com/AcademicOS.dmg")
+    monkeypatch.setattr(updater, "_fetch_release_asset",
+                        lambda: ("https://example.com/AcademicOS.dmg", "v99.0.0"))
     monkeypatch.setattr(updater, "_download", lambda url, dest: None)
     monkeypatch.setattr(updater, "_hdiutil_attach", lambda dmg: "/Volumes/FakeOS")
     monkeypatch.setattr(updater, "_locate_app", lambda mp: source_app)
@@ -336,3 +336,31 @@ def test_install_failure_rolls_back_original_and_job_ends_in_error(monkeypatch, 
 
     # Reset so this test can't bleed into others.
     updater._set(state="idle", pct=None, error_kind=None, message=None)
+
+
+def test_run_job_skips_download_when_release_tag_not_newer(monkeypatch):
+    """F64: tag_name <= APP_VERSION must short-circuit before the DMG download."""
+    monkeypatch.setattr(updater, "_fetch_release_asset",
+                        lambda: ("https://example.com/AcademicOS.dmg", f"v{updater.APP_VERSION}"))
+
+    def _no_download(url, dest):  # pragma: no cover
+        raise AssertionError("downloaded the DMG although already on latest")
+
+    monkeypatch.setattr(updater, "_download", _no_download)
+    updater._set(state="checking", pct=None, error_kind=None, message=None,
+                 available_version=None)
+    updater._run_job()
+    snap = updater._snapshot()
+    assert snap["state"] == "idle"
+    assert "latest" in snap["message"]
+    updater._set(state="idle", pct=None, error_kind=None, message=None)
+
+
+def test_fetch_release_asset_returns_tag(monkeypatch):
+    class _R:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"tag_name": "v9.9.9", "assets": [
+                {"name": updater.ASSET_NAME, "browser_download_url": "https://x/y.dmg"}]}
+    monkeypatch.setattr(updater.httpx, "get", lambda *a, **k: _R())
+    assert updater._fetch_release_asset() == ("https://x/y.dmg", "v9.9.9")

@@ -32,11 +32,12 @@ interface OsStore {
   theme: ThemePref
   setTheme: (theme: ThemePref) => void
   boot: () => void
-  setStage: (stage: Stage) => Promise<void>
-  setUserName: (name: string) => Promise<void>
-  setTrack: (track: Track | null) => Promise<void>
-  setTestDate: (testDate: string) => Promise<void>
-  setReminders: (reminders: boolean) => Promise<void>
+  // setters resolve false (after rolling state back + toasting) when the save failed
+  setStage: (stage: Stage) => Promise<boolean>
+  setUserName: (name: string) => Promise<boolean>
+  setTrack: (track: Track | null) => Promise<boolean>
+  setTestDate: (testDate: string) => Promise<boolean>
+  setReminders: (reminders: boolean) => Promise<boolean>
   openStagePicker: (open: boolean) => void
   setPalette: (open: boolean) => void
   dismissToast: (id: string) => void
@@ -80,6 +81,16 @@ function initialTheme(): ThemePref {
   return pref
 }
 
+function pushToast(
+  set: (fn: (s: OsStore) => Partial<OsStore>) => void,
+  get: () => OsStore,
+  text: string,
+) {
+  const toast: Toast = { id: `err_${Date.now()}`, text }
+  set((s) => ({ toasts: [...s.toasts, toast].slice(-3) }))
+  setTimeout(() => get().dismissToast(toast.id), 6000)
+}
+
 export const useOs = create<OsStore>((set, get) => ({
   agents: [],
   runs: [],
@@ -110,9 +121,21 @@ export const useOs = create<OsStore>((set, get) => ({
   boot: () => {
     if (get().booted) return
     set({ booted: true })
-    void profileApi.get().then((p) =>
-      set({ stage: p.stage, userName: p.name, track: p.track, testDate: p.test_date, reminders: p.reminders, stageLoaded: true }),
-    )
+    // A failed read (backend still starting, 5xx) is NOT "first run": keep
+    // stageLoaded false and retry, otherwise the unskippable onboarding modal
+    // opens for an existing user and picking a stage overwrites their profile.
+    let profileTries = 0
+    const loadProfile = () => {
+      void profileApi.get().then((p) => {
+        if (p) {
+          set({ stage: p.stage, userName: p.name, track: p.track, testDate: p.test_date, reminders: p.reminders, stageLoaded: true })
+        } else {
+          profileTries += 1
+          setTimeout(loadProfile, Math.min(1000 * profileTries, 5000))
+        }
+      })
+    }
+    loadProfile()
     void api.agents().then((agents) => set({ agents }))
     void api.runs().then((runs) => set({ runs }))
     void api.approvals().then((approvals) => set({ approvals }))
@@ -123,6 +146,11 @@ export const useOs = create<OsStore>((set, get) => ({
     unsubscribe?.()
     unsubscribe = api.events((e) => {
       set((s) => ({ events: [e, ...s.events].slice(0, MAX_EVENTS) }))
+      // an agent started/finished: refresh cards + recent runs so "Running…" never sticks
+      if (e.kind === 'agent' && /\b(started|finished)$/.test(e.message)) {
+        void api.agents().then((agents) => set({ agents }))
+        void api.runs().then((runs) => set({ runs }))
+      }
       // a live escalation refreshes the queue and surfaces a toast
       if (e.kind === 'approval' && e.message.includes('escalated')) {
         void api.approvals().then((approvals) => set({ approvals }))
@@ -133,35 +161,56 @@ export const useOs = create<OsStore>((set, get) => ({
     })
   },
 
-  // the backend PUT replaces the whole profile — every setter sends every field
+  // the backend PUT replaces the whole profile — every setter sends every field.
+  // Optimistic: on a failed PUT (409 newer data, 422 bad date, backend down)
+  // roll back to the previous values and tell the user.
   setStage: async (stage) => {
+    const prev = get().stage
     set({ stage, stagePickerOpen: false })
     const s = get()
-    await profileApi.set(stage, s.userName, s.track, s.testDate, s.reminders)
+    const ok = await profileApi.set(stage, s.userName, s.track, s.testDate, s.reminders)
+    if (!ok) { set({ stage: prev }); pushToast(set, get, 'Could not save your stage. Nothing was changed.') }
+    return ok
   },
 
   setUserName: async (userName) => {
+    const prev = get().userName
     set({ userName })
     const s = get()
-    if (s.stage) await profileApi.set(s.stage, userName, s.track, s.testDate, s.reminders)
+    if (!s.stage) return true
+    const ok = await profileApi.set(s.stage, userName, s.track, s.testDate, s.reminders)
+    if (!ok) { set({ userName: prev }); pushToast(set, get, 'Could not save your name. Nothing was changed.') }
+    return ok
   },
 
   setTrack: async (track) => {
+    const prev = get().track
     set({ track })
     const s = get()
-    if (s.stage) await profileApi.set(s.stage, s.userName, track, s.testDate, s.reminders)
+    if (!s.stage) return true
+    const ok = await profileApi.set(s.stage, s.userName, track, s.testDate, s.reminders)
+    if (!ok) { set({ track: prev }); pushToast(set, get, 'Could not save that. Nothing was changed.') }
+    return ok
   },
 
   setTestDate: async (testDate) => {
+    const prev = get().testDate
     set({ testDate })
     const s = get()
-    if (s.stage) await profileApi.set(s.stage, s.userName, s.track, testDate, s.reminders)
+    if (!s.stage) return true
+    const ok = await profileApi.set(s.stage, s.userName, s.track, testDate, s.reminders)
+    if (!ok) { set({ testDate: prev }); pushToast(set, get, 'Could not save that date. Nothing was changed.') }
+    return ok
   },
 
   setReminders: async (reminders) => {
+    const prev = get().reminders
     set({ reminders })
     const s = get()
-    if (s.stage) await profileApi.set(s.stage, s.userName, s.track, s.testDate, reminders)
+    if (!s.stage) return true
+    const ok = await profileApi.set(s.stage, s.userName, s.track, s.testDate, reminders)
+    if (!ok) { set({ reminders: prev }); pushToast(set, get, 'Could not save that setting. Nothing was changed.') }
+    return ok
   },
 
   openStagePicker: (stagePickerOpen) => set({ stagePickerOpen }),
@@ -171,7 +220,15 @@ export const useOs = create<OsStore>((set, get) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   runAgent: async (name) => {
-    await api.runAgent(name)
+    try {
+      await api.runAgent(name)
+    } catch (err) {
+      // disabled agent, unknown name, backend down: tell the user instead of an unhandled rejection
+      const toast: Toast = { id: `run_err_${Date.now()}`, text: `Could not run ${name}: ${err instanceof Error ? err.message : String(err)}` }
+      set((s) => ({ toasts: [...s.toasts, toast].slice(-3) }))
+      setTimeout(() => get().dismissToast(toast.id), 6000)
+      return
+    }
     set({ agents: await api.agents() })
     set((s) => ({
       events: [
@@ -183,8 +240,13 @@ export const useOs = create<OsStore>((set, get) => ({
 
   decide: async (id, approve) => {
     const item = get().approvals.find((a) => a.id === id)
-    await api.decide(id, approve)
+    const failure = await api.decide(id, approve)
     set({ approvals: await api.approvals() })
+    if (failure) {
+      const toast: Toast = { id: `decide_err_${Date.now()}`, text: failure }
+      set((s) => ({ toasts: [...s.toasts, toast].slice(-3) }))
+      setTimeout(() => get().dismissToast(toast.id), 8000)
+    }
     if (item) {
       set((s) => ({
         events: [

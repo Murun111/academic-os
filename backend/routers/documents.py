@@ -70,14 +70,17 @@ def list_documents(
 
 @router.post("")
 def add_document(body: _AddBody) -> dict:
-    item = get_service().add(
-        title=body.title,
-        kind=body.kind,
-        status=body.status,
-        tags=body.tags,
-        linked_application_ids=body.linked_application_ids,
-        notes=body.notes,
-    )
+    try:
+        item = get_service().add(
+            title=body.title,
+            kind=body.kind,
+            status=body.status,
+            tags=body.tags,
+            linked_application_ids=body.linked_application_ids,
+            notes=body.notes,
+        )
+    except DocumentsServiceError as e:
+        return JSONResponse({"error": "invalid_document", "detail": str(e)}, status_code=422)
     return {"ok": True, "item": item.to_dict()}
 
 
@@ -104,7 +107,22 @@ def update_document(doc_id: str, body: _UpdateBody) -> dict:
         )
     except KeyError:
         return JSONResponse({"error": "not_found", "detail": doc_id}, status_code=404)
+    except DocumentsServiceError as e:
+        return JSONResponse({"error": "invalid_document", "detail": str(e)}, status_code=422)
     return {"ok": True, "item": item.to_dict()}
+
+
+def _drop_from_applications(doc_id: str) -> None:
+    """Best-effort: remove a deleted document's id from applications' document_ids."""
+    try:
+        from backend.routers.applications import get_service as apps_service
+
+        svc = apps_service()
+        for a in svc.list_all():
+            if doc_id in (a.document_ids or []):
+                svc.update(a.id, document_ids=[d for d in a.document_ids if d != doc_id])
+    except Exception as e:  # cross-module cleanup must never fail the delete
+        print(f"[documents] application link cleanup skipped: {e!r}")
 
 
 @router.delete("/{doc_id}")
@@ -113,6 +131,7 @@ def delete_document(doc_id: str) -> dict:
         get_service().delete(doc_id)
     except KeyError:
         return JSONResponse({"error": "not_found", "detail": doc_id}, status_code=404)
+    _drop_from_applications(doc_id)
     return {"ok": True}
 
 

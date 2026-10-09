@@ -241,3 +241,28 @@ def test_agenda_includes_done_tasks_with_done_meta(client: TestClient):
     mine = [i for i in items if i["kind"] == "task" and i["id"] == tid]
     assert len(mine) == 1
     assert mine[0]["meta"]["done"] is True
+
+
+def test_study_concurrent_updates_and_adds_lose_nothing(tmp_path):
+    """F18: same race for tasks.jsonl."""
+    import threading
+    from backend.services.study import StudyService
+    svc = StudyService(tmp_path)
+    seeds = [svc.add(title=f"s{i}") for i in range(40)]
+    errors = []
+
+    def run(fn):
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    ts = [threading.Thread(target=run, args=(lambda t=t: svc.update(t.id, notes="x"),)) for t in seeds]
+    ts += [threading.Thread(target=run, args=(lambda i=i: svc.add(title=f"n{i}"),)) for i in range(40)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert errors == []
+    items = svc.list_all()
+    assert len(items) == 80
+    assert sum(1 for t in items if t.notes == "x") == 40
+    assert not list(tmp_path.glob("*.tmp"))

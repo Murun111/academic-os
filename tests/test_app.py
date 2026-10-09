@@ -45,3 +45,21 @@ def test_websocket_endpoint_exists():
         # Server should send a hello message immediately
         msg = ws.receive_json()
         assert msg["type"] in ("hello", "ping", "ready")
+
+
+def test_activity_recent_returns_full_iso_timestamp(tmp_path, monkeypatch):
+    """F59: items carry a full ISO timestamp so old events don't look like 'just now'."""
+    import os
+    from datetime import datetime, timedelta
+    monkeypatch.setenv("ACADEMIC_OS_DATA", str(tmp_path))
+    d = tmp_path / "output" / "daily"
+    d.mkdir(parents=True)
+    f = d / "2026-01-01.md"
+    f.write_text("x")
+    old = (datetime.now() - timedelta(days=3)).timestamp()
+    os.utime(f, (old, old))
+    r = TestClient(app).get("/api/activity/recent")
+    assert r.status_code == 200
+    items = [i for i in r.json()["items"] if i["kind"] == "brief"]
+    assert items and items[0]["iso"].startswith((datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d"))
+    assert items[0]["time"] == datetime.fromtimestamp(old).strftime("%H:%M")

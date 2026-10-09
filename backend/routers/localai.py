@@ -46,5 +46,5 @@ def localai_start() -> JSONResponse:
 
 @router.post("/stop")
 def localai_stop() -> dict:
-    local_llm.stop()
-    return {"ok": True, "running": False}
+    stopped = local_llm.stop()
+    return {"ok": stopped, "running": not stopped}

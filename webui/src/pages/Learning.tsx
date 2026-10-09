@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { learning, isUnavailable, type LearningOverview } from '../lib/learningApi'
+import { learning, isUnavailable, onLearningMutated, type LearningOverview } from '../lib/learningApi'
 import { Btn, Panel } from '../components/ui'
 import { ReviewSession } from '../components/learning/ReviewSession'
 import { DecksPanel } from '../components/learning/DecksPanel'
@@ -11,15 +11,18 @@ import { FocusPanel } from '../components/learning/FocusPanel'
 import { TutorPanel } from '../components/learning/TutorPanel'
 import { GeneratePanel } from '../components/learning/GeneratePanel'
 
-const TABS: { id: string; label: string; render: () => ReactNode }[] = [
-  { id: 'review', label: 'Review', render: () => <ReviewSession /> },
+// `keepAlive` tabs hold in-progress work (a running timer, a half-answered quiz,
+// an unsaved generation, a conversation), so once visited they stay mounted and
+// are only hidden. The rest list server data and remount fresh on every visit.
+const TABS: { id: string; label: string; keepAlive?: boolean; render: (active: boolean) => ReactNode }[] = [
+  { id: 'review', label: 'Review', render: (active) => <ReviewSession active={active} /> },
   { id: 'decks', label: 'Decks', render: () => <DecksPanel /> },
-  { id: 'quizzes', label: 'Quizzes', render: () => <QuizzesPanel /> },
+  { id: 'quizzes', label: 'Quizzes', keepAlive: true, render: () => <QuizzesPanel /> },
   { id: 'guides', label: 'Guides', render: () => <GuidesPanel /> },
   { id: 'mastery', label: 'Mastery', render: () => <MasteryPanel /> },
-  { id: 'focus', label: 'Focus', render: () => <FocusPanel /> },
-  { id: 'tutor', label: 'Tutor', render: () => <TutorPanel /> },
-  { id: 'generate', label: 'Generate', render: () => <GeneratePanel /> },
+  { id: 'focus', label: 'Focus', keepAlive: true, render: () => <FocusPanel /> },
+  { id: 'tutor', label: 'Tutor', keepAlive: true, render: () => <TutorPanel /> },
+  { id: 'generate', label: 'Generate', keepAlive: true, render: () => <GeneratePanel /> },
 ]
 
 function Stat({ label, value, loading }: { label: string; value: string; loading: boolean }) {
@@ -38,6 +41,10 @@ export function Learning() {
   const [error, setError] = useState<string | null>(null)
 
   const active = TABS.find((t) => t.id === params.get('tab')) ?? TABS[0]
+  const [visited, setVisited] = useState<string[]>([active.id])
+  useEffect(() => {
+    setVisited((v) => (v.includes(active.id) ? v : [...v, active.id]))
+  }, [active.id])
 
   const load = useCallback(async () => {
     // No setLoading(true) here: initial state covers first load, and tab-switch
@@ -60,6 +67,20 @@ export function Learning() {
   useEffect(() => {
     void load()
   }, [load, active.id])
+
+  // Any successful write inside a panel (a review, an import, a logged focus
+  // session) refreshes the header stats without waiting for a tab switch.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = onLearningMutated(() => {
+      clearTimeout(timer)
+      timer = setTimeout(() => void load(), 300)
+    })
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
+  }, [load])
 
   const o = overview
   const stats: { label: string; value: string }[] = [
@@ -113,7 +134,15 @@ export function Learning() {
       </div>
 
       <div id="learning-panel" role="tabpanel" aria-labelledby={`learning-tab-${active.id}`}>
-        {active.render()}
+        {TABS.map((t) => {
+          const on = t.id === active.id
+          if (!on && !(t.keepAlive && visited.includes(t.id))) return null
+          return (
+            <div key={t.id} hidden={!on}>
+              {t.render(on)}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

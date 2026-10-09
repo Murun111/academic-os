@@ -407,7 +407,13 @@ def test_summary_invalid_deadline_ignored(client):
     svc = ApplicationsService(Path(client.app.dependency_overrides.get(None) or "/tmp"))
     # Actually, we need to use the test's data dir - get from the service
     svc = applications_router.get_service()
-    s = svc.add(name="Invalid", type="scholarship", amount=100, deadline="not-a-date")
+    s = svc.add(name="Invalid", type="scholarship", amount=100)
+    # Legacy/hand-edited data can still hold a bad deadline: write it past validation.
+    items = svc._read_all()
+    for it in items:
+        if it.id == s.id:
+            it.deadline = "not-a-date"
+    svc._write_all(items)
 
     summary = client.get("/api/applications/scholarships/summary").json()
     # Only the valid one should be in next_deadlines

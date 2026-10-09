@@ -51,6 +51,9 @@ export function WhatIf({ current }: { current: number }) {
   const needed = valid ? neededOnFinal(current, w, t) : null
 
   let verdict = ''
+  const entered = worth.trim() !== '' && target.trim() !== ''
+  if (entered && !Number.isNaN(w) && (w <= 0 || w > 100)) verdict = 'Final weight must be between 1 and 100.'
+  else if (entered && (Number.isNaN(w) || Number.isNaN(t))) verdict = 'Enter numbers only, for example 30 and 90.'
   if (valid && needed != null) {
     if (needed <= 0) verdict = `Already secured — even a 0 on the final keeps ${t}%.`
     else if (needed > 100) verdict = `Not reachable with the final alone (needs ${needed.toFixed(1)}%).`

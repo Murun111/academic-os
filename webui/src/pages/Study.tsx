@@ -1,20 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { study, kindTone, isOverdue, type Agenda, type AgendaItem } from '../lib/studyApi'
+import { study, kindTone, isOverdue, todayIso, addDaysIso as addDays, type Agenda, type AgendaItem } from '../lib/studyApi'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
 import { GuidePanel } from '../components/GuidePanel'
+import { ConfirmDelete, EditText } from '../components/CourseRows'
 
 const WEEK_DAYS = 7
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function addDays(iso: string, n: number): string {
-  const d = new Date(`${iso}T00:00:00`)
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
 
 function dayLabel(iso: string): string {
   const d = new Date(`${iso}T00:00:00`)
@@ -39,15 +30,21 @@ function isItemDone(item: AgendaItem): boolean {
   return meta.done === true || meta.status === 'done'
 }
 
-function AgendaRow({ item, onToggleDone }: { item: AgendaItem; onToggleDone?: (id: string) => void }) {
+function AgendaRow({ item, onToggleDone, onDelete, onRename }: {
+  item: AgendaItem
+  onToggleDone?: (item: AgendaItem) => void
+  onDelete?: (id: string) => void
+  onRename?: (id: string, title: string) => void
+}) {
   const isTask = item.kind === 'task'
+  const done = isItemDone(item)
   return (
     <div className="flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-ink/4">
       {isTask && item.id ? (
         <input
           type="checkbox"
           checked={isItemDone(item)}
-          onChange={() => onToggleDone?.(item.id as string)}
+          onChange={() => onToggleDone?.(item)}
           className="size-3.5 accent-ink/70"
           aria-label={`Mark "${item.title ?? 'task'}" done`}
         />
@@ -55,9 +52,23 @@ function AgendaRow({ item, onToggleDone }: { item: AgendaItem; onToggleDone?: (i
         <span className="inline-block size-3.5" />
       )}
       <KindPill kind={item.kind} />
-      <span className="flex-1 truncate text-[13px] text-mid">{item.title ?? '(untitled)'}</span>
-      {item.date && isOverdue(item.date) && <Mono className="text-fail">overdue</Mono>}
+      {isTask && item.id ? (
+        <EditText
+          value={item.title ?? ''}
+          onCommit={(t) => onRename?.(item.id as string, t)}
+          ariaLabel="Task title"
+          className={`min-w-0 flex-1 text-[13px] ${done ? 'line-through opacity-60' : ''}`}
+        />
+      ) : (
+        <span className="flex-1 truncate text-[13px] text-mid">{item.title ?? '(untitled)'}</span>
+      )}
+      {!done && item.date && isOverdue(item.date) && <Mono className="text-fail">overdue</Mono>}
       <Mono className="w-[76px] shrink-0 text-right text-low">{item.date ?? '—'}</Mono>
+      {isTask && item.id ? (
+        <ConfirmDelete onConfirm={() => onDelete?.(item.id as string)} label={`Delete ${item.title ?? 'task'}`} />
+      ) : (
+        <span className="inline-block size-3.5 shrink-0" />
+      )}
     </div>
   )
 }
@@ -69,6 +80,7 @@ export function Study() {
   const [title, setTitle] = useState('')
   const [day, setDay] = useState(todayIso())
   const [adding, setAdding] = useState(false)
+  const [addError, setAddError] = useState('')
 
   const load = useCallback(async () => {
     setError(false)
@@ -89,7 +101,8 @@ export function Study() {
   const today = todayIso()
 
   const todayAndOverdue = useMemo(
-    () => agenda.items.filter((i) => !i.date || i.date <= today),
+    // finished items from past days drop out; today's stay so they can be unticked
+    () => agenda.items.filter((i) => (!i.date || i.date <= today) && (!isItemDone(i) || i.date === today)),
     [agenda.items, today],
   )
 
@@ -106,8 +119,20 @@ export function Study() {
     return map
   }, [agenda.items, weekDates])
 
-  const handleToggleDone = async (id: string) => {
-    await study.markDone(id)
+  const handleToggleDone = async (item: AgendaItem) => {
+    if (!item.id) return
+    if (isItemDone(item)) await study.reopen(item.id)
+    else await study.markDone(item.id)
+    void load()
+  }
+
+  const handleDelete = async (id: string) => {
+    await study.deleteTask(id)
+    void load()
+  }
+
+  const handleRename = async (id: string, newTitle: string) => {
+    await study.updateTask(id, { title: newTitle })
     void load()
   }
 
@@ -115,9 +140,15 @@ export function Study() {
     const t = title.trim()
     if (!t) return
     setAdding(true)
-    await study.addTask({ title: t, day: day || todayIso() })
-    setTitle('')
+    setAddError('')
+    const created = await study.addTask({ title: t, day: day || todayIso() })
     setAdding(false)
+    if (!created) {
+      // keep what the student typed; they can press Add again
+      setAddError('Could not save the task. Try again.')
+      return
+    }
+    setTitle('')
     void load()
   }
 
@@ -151,6 +182,7 @@ export function Study() {
             </span>
           </Btn>
         </div>
+        {addError && <p className="px-4 pb-3 text-[12.5px] text-fail">{addError}</p>}
       </Panel>
       </div>
 
@@ -195,7 +227,7 @@ export function Study() {
                         <input
                           type="checkbox"
                           checked={isItemDone(item)}
-                          onChange={() => void handleToggleDone(item.id as string)}
+                          onChange={() => void handleToggleDone(item)}
                           className="size-3 shrink-0 accent-ink/70"
                           aria-label={`Mark "${item.title ?? 'task'}" done`}
                         />
@@ -218,7 +250,13 @@ export function Study() {
             <EmptyState title="Nothing due today." hint="Add a task above, or check the week above." />
           )}
           {todayAndOverdue.map((item) => (
-            <AgendaRow key={`${item.kind}-${item.id ?? item.title}`} item={item} onToggleDone={handleToggleDone} />
+            <AgendaRow
+              key={`${item.kind}-${item.id ?? item.title}`}
+              item={item}
+              onToggleDone={(i) => void handleToggleDone(i)}
+              onDelete={(id) => void handleDelete(id)}
+              onRename={(id, t) => void handleRename(id, t)}
+            />
           ))}
         </div>
       </Panel>

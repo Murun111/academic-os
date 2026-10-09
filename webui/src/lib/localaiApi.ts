@@ -12,6 +12,8 @@ export interface LocalAiStatus {
   models: Record<string, LocalAiModelInfo>
   download: { model: string; pct: number | null; done: boolean; error: string | null } | null
   running: boolean
+  starting?: boolean
+  start_error?: string | null
   port: number
 }
 
@@ -53,7 +55,10 @@ export const localaiApi = {
 
   stop: async (): Promise<boolean> => {
     try {
-      return (await fetch(`${BASE}/stop`, { method: 'POST' })).ok
+      const res = await fetch(`${BASE}/stop`, { method: 'POST' })
+      if (!res.ok) return false
+      // 200 with ok:false means the server is still listening (not ours to stop)
+      return (await res.json()).ok === true
     } catch {
       return false
     }

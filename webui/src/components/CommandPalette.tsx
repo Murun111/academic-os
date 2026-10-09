@@ -6,6 +6,8 @@ import {
   GraduationCap, BookOpen, CalendarCheck, CalendarDays, Files, Sparkles, Brain, Play, Check, X as XIcon,
 } from 'lucide-react'
 import { useOs } from '../lib/store'
+import { stageConfig } from '../lib/stageConfig'
+import { trackApplies, trackConfig } from '../lib/trackConfig'
 import { Kbd } from './ui'
 import { applicationsApi, type Application } from '../lib/applicationsApi'
 import { coursesApi, type Course } from '../lib/coursesApi'
@@ -16,6 +18,9 @@ interface Cmd {
   group: 'Go to' | 'Run agent' | 'Approvals' | 'Applications' | 'Courses' | 'Documents'
   label: string
   hint?: string
+  /** extra words that should match this command (e.g. the generic "applications" for a stage-renamed page) */
+  keywords?: string
+  to?: string
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>
   action: () => void
 }
@@ -35,6 +40,9 @@ export function CommandPalette() {
   const approvals = useOs((s) => s.approvals)
   const runAgent = useOs((s) => s.runAgent)
   const decide = useOs((s) => s.decide)
+  const stage = useOs((s) => s.stage)
+  const track = useOs((s) => s.track)
+  const appsLabel = (trackApplies(stage) ? trackConfig(track)?.appsTitle : undefined) ?? stageConfig(stage).appsTitle
   const navigate = useNavigate()
 
   const [query, setQuery] = useState('')
@@ -78,20 +86,26 @@ export function CommandPalette() {
   }, [open])
 
   const commands = useMemo<Cmd[]>(() => {
-    const nav: Cmd[] = [
-      { id: 'g-dash', group: 'Go to', label: 'Dashboard', icon: LayoutGrid, action: () => navigate('/') },
-      { id: 'g-apps', group: 'Go to', label: 'Applications', icon: GraduationCap, action: () => navigate('/applications') },
-      { id: 'g-courses', group: 'Go to', label: 'Courses', icon: BookOpen, action: () => navigate('/courses') },
-      { id: 'g-study', group: 'Go to', label: 'Study', icon: CalendarCheck, action: () => navigate('/study') },
-      { id: 'g-learning', group: 'Go to', label: 'Learning', icon: Brain, action: () => navigate('/learning') },
-      { id: 'g-cal', group: 'Go to', label: 'Calendar', icon: CalendarDays, action: () => navigate('/calendar') },
-      { id: 'g-docs', group: 'Go to', label: 'Documents', icon: Files, action: () => navigate('/documents') },
-      { id: 'g-routines', group: 'Go to', label: 'Routines', icon: Sparkles, action: () => navigate('/routines') },
-      { id: 'g-chat', group: 'Go to', label: 'Chat', icon: MessageSquare, action: () => navigate('/chat') },
-      { id: 'g-agents', group: 'Go to', label: 'Assistants', icon: Bot, action: () => navigate('/agents') },
-      { id: 'g-appr', group: 'Go to', label: 'Approvals', icon: ShieldCheck, action: () => navigate('/approvals') },
-      { id: 'g-settings', group: 'Go to', label: 'Settings', icon: SettingsIcon, action: () => navigate('/settings') },
+    const go = (id: string, label: string, icon: Cmd['icon'], to: string, keywords?: string): Cmd =>
+      ({ id, group: 'Go to', label, keywords, to, icon, action: () => navigate(to) })
+    const navUnsorted: Cmd[] = [
+      go('g-dash', 'Dashboard', LayoutGrid, '/'),
+      go('g-apps', appsLabel, GraduationCap, '/applications', 'applications programs colleges schools'),
+      go('g-courses', 'Courses', BookOpen, '/courses'),
+      go('g-study', 'Study', CalendarCheck, '/study'),
+      go('g-learning', 'Learning', Brain, '/learning'),
+      go('g-cal', 'Calendar', CalendarDays, '/calendar'),
+      go('g-docs', 'Documents', Files, '/documents'),
+      go('g-routines', 'Routines', Sparkles, '/routines'),
+      go('g-chat', 'Chat', MessageSquare, '/chat'),
+      go('g-agents', 'Assistants', Bot, '/agents'),
+      go('g-appr', 'Approvals', ShieldCheck, '/approvals'),
+      go('g-settings', 'Settings', SettingsIcon, '/settings'),
     ]
+    // same order as the sidebar (stage-aware); anything not listed keeps its place after
+    const order = stageConfig(stage).navOrder
+    const rank = (c: Cmd) => { const i = order.indexOf(c.to ?? ''); return i === -1 ? order.length : i }
+    const nav = [...navUnsorted].sort((a, b) => rank(a) - rank(b))
     const run: Cmd[] = agents.map((a) => ({
       id: `run-${a.name}`, group: 'Run agent', label: a.name, hint: a.state,
       icon: Play, action: () => void runAgent(a.name),
@@ -101,7 +115,7 @@ export function CommandPalette() {
       { id: `no-${a.id}`, group: 'Approvals' as const, label: `Deny ${a.tool}`, hint: a.agent, icon: XIcon, action: () => void decide(a.id, false) },
     ])
     return [...nav, ...run, ...appr]
-  }, [agents, approvals, navigate, runAgent, decide])
+  }, [agents, approvals, navigate, runAgent, decide, appsLabel, stage])
 
   const searchGroups = useMemo<Cmd[]>(() => {
     const n = query.trim().toLowerCase()
@@ -134,7 +148,7 @@ export function CommandPalette() {
     if (!query.trim()) return commands
     const n = query.toLowerCase()
     const staticMatches = commands.filter((c) =>
-      (c.label + ' ' + c.group + ' ' + (c.hint ?? '')).toLowerCase().includes(n),
+      (c.label + ' ' + c.group + ' ' + (c.hint ?? '') + ' ' + (c.keywords ?? '')).toLowerCase().includes(n),
     )
     return [...staticMatches, ...searchGroups]
   }, [commands, query, searchGroups])

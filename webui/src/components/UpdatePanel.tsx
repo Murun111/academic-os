@@ -53,6 +53,8 @@ export function UpdatePanel() {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const poll = useRef<number | null>(null)
+  const sawRestart = useRef(false)
+  const [installError, setInstallError] = useState('')
 
   // legacy "check on GitHub" flow — used when there's no backend update
   // endpoint at all, and kept as the manual path for non-eligible builds.
@@ -74,10 +76,18 @@ export function UpdatePanel() {
       void (async () => {
         const next = await updateApi.status()
         // a fetch failure here (e.g. the server bounced mid-restart) should
-        // not blank out the last real status — just keep waiting.
+        // not blank out the last real status — keep waiting until the deadline.
         if (next) setStatus(next)
         const phase = next ? phaseOf(next) : null
-        const stillRunning = phase !== null && JOB_ACTIVE.includes(phase)
+        if (phase === 'restarting') sawRestart.current = true
+        // The server answered again after the restart step: the new build is
+        // up (idle state), so reload to pick up its UI.
+        if (sawRestart.current && next && phase === 'idle') {
+          stopPoll()
+          window.location.reload()
+          return
+        }
+        const stillRunning = next === null || (phase !== null && JOB_ACTIVE.includes(phase))
         if (!stillRunning || Date.now() > deadline) {
           stopPoll()
           setBusy(false)
@@ -107,9 +117,21 @@ export function UpdatePanel() {
 
   const install = async () => {
     setBusy(true)
-    await updateApi.install() // false on 409 (a job's already running elsewhere) or 400 (not eligible) — either way, the status poll below reflects the real state
+    setInstallError('')
+    // false on 409 (a job's already running elsewhere, or newer-data guard) or
+    // 400 (not eligible): the status below says which; never fail silently.
+    const started = await updateApi.install()
     const fresh = await updateApi.status()
     if (fresh) setStatus(fresh)
+    if (!started && !(fresh && JOB_ACTIVE.includes(phaseOf(fresh)))) {
+      setInstallError(
+        fresh && !fresh.eligible
+          ? fresh.eligible_reason || "This build can't update itself."
+          : "Couldn't start the update. Check your connection and try again.",
+      )
+      setBusy(false)
+      return
+    }
     startPoll()
   }
 
@@ -199,6 +221,7 @@ export function UpdatePanel() {
           <Btn className="mt-1.5" onClick={() => void install()} disabled={busy}>Try again</Btn>
         </div>
       )}
+      {installError && <p className="mt-2 text-[12.5px] text-fail">{installError}</p>}
       {/* idle after a completed, no-op check — e.g. "You're already on the latest version." */}
       {status && phase === 'idle' && status.message && (
         <p className="mt-1.5 text-[12.5px] text-mid">{status.message}</p>

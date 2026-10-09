@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Sparkles } from 'lucide-react'
 import {
-  learning, isUnavailable,
+  learning, isUnavailable, onLearningMutated,
   type Deck, type Difficulty, type GeneratedCard, type GeneratedQuestion, type GuideData,
 } from '../../lib/learningApi'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../ui'
@@ -61,6 +61,8 @@ export function GeneratePanel() {
   }, [])
 
   useEffect(() => { void loadDecks() }, [loadDecks])
+  // this panel stays mounted across tab switches, so keep its deck list fresh
+  useEffect(() => onLearningMutated(() => { void loadDecks() }), [loadDecks])
 
   const canGenerate = !generating && (topic.trim() !== '' || notes.trim() !== '')
 
@@ -101,7 +103,8 @@ export function GeneratePanel() {
           await learning.createDeck({ title: result.topic, cards: result.cards })
           setSaveMsg('Saved as a new deck.')
         } else {
-          for (const c of result.cards) await learning.addCard(target, c)
+          // one request: the server saves all cards or none, so a retry cannot duplicate
+          await learning.addCards(target, result.cards)
           setSaveMsg('Cards added to the deck.')
         }
         void loadDecks()

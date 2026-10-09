@@ -95,7 +95,7 @@ class RequirementUpdate(BaseModel):
 
 
 @router.get("/deadlines")
-def deadlines(days: int = Query(30)) -> dict:
+def deadlines(days: int = Query(30, ge=0, le=365)) -> dict:
     svc = get_service()
     items = svc.upcoming_deadlines(days=days)
     return {"items": [i.to_dict() for i in items], "count": len(items)}
@@ -256,6 +256,12 @@ def delete_application(app_id: str) -> dict:
         svc.delete(app_id)
     except KeyError:
         return JSONResponse({"error": "not_found", "detail": app_id}, status_code=404)
+    try:  # best-effort: don't leave dead application ids on documents
+        from backend.routers.documents import get_service as docs_service
+
+        docs_service().unlink_application_everywhere(app_id)
+    except Exception as e:
+        print(f"[applications] document link cleanup skipped: {e!r}")
     return {"ok": True}
 
 

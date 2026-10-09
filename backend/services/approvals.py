@@ -40,7 +40,7 @@ def _iso_utc() -> str:
 
 # ── public API ────────────────────────────────────────────────────────────────
 
-def list_pending(run_store: Any, limit: int = 50) -> list[dict]:
+def list_pending(run_store: Any, limit: int = 100_000) -> list[dict]:
     """Expand recent run escalations into approval-inbox items.
 
     Algorithm:
@@ -150,6 +150,25 @@ def list_decisions() -> list[dict]:
     return out
 
 
+def revoke_decision(item_id: str) -> None:
+    """Drop the recorded decision for an item so it returns to the pending queue
+    (used when an approved action failed and the user should be able to retry)."""
+    if not DECISIONS_PATH.exists():
+        return
+    kept = []
+    for line in DECISIONS_PATH.read_text().splitlines():
+        try:
+            if json.loads(line).get("item_id") == item_id:
+                continue
+        except json.JSONDecodeError:
+            pass
+        if line.strip():
+            kept.append(line)
+    tmp = DECISIONS_PATH.with_suffix(".tmp")
+    tmp.write_text("\n".join(kept) + ("\n" if kept else ""))
+    tmp.replace(DECISIONS_PATH)
+
+
 def was_executed(item_id: str) -> bool:
     """True if this approval item's action has already been executed (idempotency)."""
     if not EXECUTIONS_PATH.exists():
@@ -196,6 +215,13 @@ async def execute_item(item: dict, tools: list) -> dict:
         return {"executed": False, "reason": f"no such tool: {tool_name}"}
     try:
         result = await tool.handler(**(item.get("args") or {}))
+        # A handler that returns normally can still report failure in-band.
+        if isinstance(result, dict) and (
+            result.get("error") or result.get("ok") is False
+        ):
+            reason = result.get("error") or "tool reported failure"
+            return {"executed": False, "failed": True, "reason": str(reason),
+                    "result": result}
         return {"executed": True, "result": result}
     except Exception as e:
         return {"executed": False, "reason": f"{type(e).__name__}: {e}"}

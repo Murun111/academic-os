@@ -15,6 +15,7 @@ export interface DocumentHistoryEntry {
   version: number
   note: string
   at: string // ISO datetime
+  content?: string // draft text at the time of the snapshot
 }
 
 export interface DocumentFile {
@@ -79,6 +80,13 @@ function qs(filters: DocumentListFilters = {}): string {
 }
 
 export const documentsApi = {
+  // Throws on any failure so a page can show a real error instead of a calm
+  // empty state. `list` (below) stays forgiving for palette/drawer lookups.
+  listStrict: async (filters: DocumentListFilters = {}): Promise<Document[]> => {
+    const r = await fetch(`/api/documents${qs(filters)}`)
+    if (!r.ok) throw new Error(`documents list failed: ${r.status}`)
+    return ((await r.json()) as { items: Document[] }).items
+  },
   list: async (filters: DocumentListFilters = {}): Promise<Document[]> => {
     const r = await dget<{ items: Document[]; count: number }>(qs(filters), { items: [], count: 0 })
     return r.items
