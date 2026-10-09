@@ -165,9 +165,11 @@ export function Courses() {
           <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Courses</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Btn onClick={() => setShowSyllabus((v) => !v)}>
-            <span className="flex items-center gap-1.5"><FileText size={13} /> Import syllabus</span>
-          </Btn>
+          <span data-tour="courses-syllabus">
+            <Btn onClick={() => setShowSyllabus((v) => !v)}>
+              <span className="flex items-center gap-1.5"><FileText size={13} /> Import syllabus</span>
+            </Btn>
+          </span>
           <span data-tour="courses-add">
             <Btn kind="primary" onClick={() => setShowAddCourse((v) => !v)}>
               <span className="flex items-center gap-1.5"><Plus size={13} /> Add course</span>

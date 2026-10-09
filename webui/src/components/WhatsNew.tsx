@@ -4,11 +4,13 @@
 // Tour owns first-run — and records the baseline version so it can't fire late.
 import { useEffect, useState } from 'react'
 import { Btn } from './ui'
+import { useOs } from '../lib/store'
 import { CHANGELOG, WHATS_NEW_KEY, shouldShowWhatsNew, type WhatsNewEntry } from '../lib/whatsNew'
 
 export function WhatsNew() {
   const [entry, setEntry] = useState<WhatsNewEntry | null>(null)
   const [version, setVersion] = useState('')
+  const setTour = useOs((s) => s.setTour)
 
   useEffect(() => {
     let cancelled = false
@@ -75,7 +77,17 @@ export function WhatsNew() {
             </li>
           ))}
         </ul>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          {entry.tourCta && (
+            <Btn
+              onClick={() => {
+                dismiss()
+                setTour(true)
+              }}
+            >
+              Take the updated tour
+            </Btn>
+          )}
           <Btn onClick={dismiss}>Got it</Btn>
         </div>
       </div>

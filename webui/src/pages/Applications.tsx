@@ -198,9 +198,11 @@ export function Applications() {
               <span className="flex items-center gap-1.5"><Search size={13} /> Find scholarships</span>
             </Btn>
           </span>
-          <Btn onClick={() => setShowImport((s) => !s)}>
-            <span className="flex items-center gap-1.5"><Upload size={13} /> {showImport ? 'Close import' : 'Import CSV'}</span>
-          </Btn>
+          <span data-tour="apps-import-csv">
+            <Btn onClick={() => setShowImport((s) => !s)}>
+              <span className="flex items-center gap-1.5"><Upload size={13} /> {showImport ? 'Close import' : 'Import CSV'}</span>
+            </Btn>
+          </span>
           <span data-tour="apps-add">
             <Btn kind="primary" onClick={() => setShowForm((s) => !s)}>
               <span className="flex items-center gap-1.5"><Plus size={13} /> Add application</span>
@@ -297,7 +299,7 @@ export function Applications() {
       )}
 
       {showScholarshipStrip && (
-        <section aria-label="Scholarship summary" className="mb-6">
+        <section aria-label="Scholarship summary" data-tour="apps-scholarships" className="mb-6">
           <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
             {[
               { label: 'potential', value: formatUsd(summary?.potential_total ?? 0) },

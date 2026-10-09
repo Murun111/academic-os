@@ -91,7 +91,7 @@ export function Learning() {
         </div>
       )}
 
-      <div role="tablist" aria-label="Learning sections" className="mb-5 flex flex-wrap gap-1 border-b border-line pb-2">
+      <div role="tablist" aria-label="Learning sections" data-tour="learning-tabs" className="mb-5 flex flex-wrap gap-1 border-b border-line pb-2">
         {TABS.map((t) => {
           const on = t.id === active.id
           return (

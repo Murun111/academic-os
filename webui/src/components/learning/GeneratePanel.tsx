@@ -132,7 +132,7 @@ export function GeneratePanel() {
   const hasCount = kind !== 'guide'
 
   return (
-    <div className="space-y-4">
+    <div data-tour="learning-generate" className="space-y-4">
       <Panel>
         <PanelHead label="Generate with AI" />
         <div className="space-y-3 px-5 pb-5">

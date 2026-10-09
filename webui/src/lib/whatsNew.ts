@@ -9,12 +9,22 @@ export const WHATS_NEW_KEY = 'academicos.whatsNewSeen'
 export interface WhatsNewEntry {
   title: string
   items: string[]
+  // Offer a "Take the updated tour" button (for users who finished the old tour).
+  tourCta?: boolean
 }
 
-// Student-facing highlights per version — what a user actually sees and feels,
+// Student-facing highlights per version: what a user actually sees and feels,
 // not the technical changelog. Keep entries short; only versions with a
 // user-visible change need one.
 export const CHANGELOG: Record<string, WhatsNewEntry> = {
+  '0.6.1': {
+    title: "What's new",
+    tourCta: true,
+    items: [
+      'The guided tour now covers the Learning tab, syllabus import, and scholarship import. Take it below, or anytime from Settings.',
+      'The tour works from the keyboard: arrow keys to move, Escape to close.',
+    ],
+  },
   '0.6.0': {
     title: "What's new",
     items: [
@@ -59,7 +69,7 @@ function isNewer(a: string, b: string): boolean {
 /**
  * Whether to show the "what's new" modal for `current`, given the last version
  * the user was shown (`seen`, from localStorage; null on a fresh install).
- * Only fires on a real upgrade with changelog content — never on first run,
+ * Only fires on a real upgrade with changelog content. Never on first run,
  * never on a downgrade / dev build.
  */
 export function shouldShowWhatsNew(current: string, seen: string | null): boolean {

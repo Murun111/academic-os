@@ -266,11 +266,13 @@ export function DecksPanel() {
         right={
           <span className="flex items-center gap-2">
             <Mono className="text-low">{decks.length} total</Mono>
-            <Btn onClick={() => setImporting((v) => !v)}>
-              <span className="flex items-center gap-1.5" aria-expanded={importing}>
-                <Upload size={13} /> {importing ? 'Close import' : 'Import'}
-              </span>
-            </Btn>
+            <span data-tour="learning-import">
+              <Btn onClick={() => setImporting((v) => !v)}>
+                <span className="flex items-center gap-1.5" aria-expanded={importing}>
+                  <Upload size={13} /> {importing ? 'Close import' : 'Import'}
+                </span>
+              </Btn>
+            </span>
           </span>
         }
       />
