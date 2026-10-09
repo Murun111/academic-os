@@ -17,6 +17,16 @@ export interface WhatsNewEntry {
 // not the technical changelog. Keep entries short; only versions with a
 // user-visible change need one.
 export const CHANGELOG: Record<string, WhatsNewEntry> = {
+  '0.6.2': {
+    title: "What's new",
+    items: [
+      'Light and dark mode now follow your computer. Change it there and Academic OS switches too, with no flash when the app opens.',
+      'Chat remembers the conversation, so follow-up questions like "explain that more simply" work.',
+      'Over 100 bug fixes, including edits that could be lost when you saved two things at once, and a bad due date that could hide all your courses.',
+      'Overdue assignments now stay in your due-soon list until you mark them done.',
+      'Learning and syllabus import only ever use the AI on your computer. Your notes are never sent to an online AI service.',
+    ],
+  },
   '0.6.1': {
     title: "What's new",
     tourCta: true,
