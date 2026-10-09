@@ -56,6 +56,8 @@ export function ApplicationDrawer({
   const [nameDraft, setNameDraft] = useState('')
   const [orgDraft, setOrgDraft] = useState('')
   const [urlDraft, setUrlDraft] = useState('')
+  const [awardedDraft, setAwardedDraft] = useState('')
+  const [eligibilityDraft, setEligibilityDraft] = useState('')
   // documents linked to the open card + everything available to link
   const [linkedDocs, setLinkedDocs] = useState<Document[]>([])
   const [allDocs, setAllDocs] = useState<Document[]>([])
@@ -73,6 +75,8 @@ export function ApplicationDrawer({
     setNameDraft(item.name ?? '')
     setOrgDraft(item.org ?? '')
     setUrlDraft(item.url ?? '')
+    setAwardedDraft(item.awarded_amount == null ? '' : String(item.awarded_amount))
+    setEligibilityDraft(item.eligibility ?? '')
     setConfirmDelete(false)
   }, [item.id])
 
@@ -126,6 +130,22 @@ export function ApplicationDrawer({
     const next = parsed === null || Number.isNaN(parsed) ? null : parsed
     if (next === item.app_fee) return
     await applicationsApi.update(item.id, { app_fee: next })
+    await onChanged()
+  }
+
+  const commitAwarded = async () => {
+    const trimmed = awardedDraft.trim()
+    const parsed = trimmed === '' ? null : Number(trimmed)
+    const next = parsed === null || Number.isNaN(parsed) || parsed < 0 ? null : parsed
+    if (next === null && trimmed !== '') setAwardedDraft(item.awarded_amount == null ? '' : String(item.awarded_amount))
+    if (next === (item.awarded_amount ?? null)) return
+    await applicationsApi.update(item.id, { awarded_amount: next })
+    await onChanged()
+  }
+
+  const commitEligibility = async () => {
+    if (eligibilityDraft === (item.eligibility ?? '')) return
+    await applicationsApi.update(item.id, { eligibility: eligibilityDraft })
     await onChanged()
   }
 
@@ -314,6 +334,50 @@ export function ApplicationDrawer({
         />
         <span className="text-[12.5px] text-mid">fee waived</span>
       </label>
+
+      {item.type === 'scholarship' && (
+        <div className="mb-4 flex items-end gap-3">
+          <div className="flex-1">
+            <label htmlFor="app-awarded" className="label-mono mb-1 block">awarded amount (USD)</label>
+            <input
+              id="app-awarded"
+              type="number"
+              min={0}
+              value={awardedDraft}
+              onChange={(e) => setAwardedDraft(e.target.value)}
+              onBlur={() => void commitAwarded()}
+              placeholder="0"
+              className="w-full rounded-lg border border-line bg-raise2 px-3 py-1.5 text-[13px] text-hi outline-none focus:border-ink/25"
+            />
+          </div>
+          {item.type === 'scholarship' && (
+            <label className="flex items-center gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={item.renewable ?? false}
+                onChange={(e) => void patch({ renewable: e.target.checked })}
+                className="size-3.5 accent-ink/70"
+              />
+              <span className="text-[12.5px] text-mid">renewable</span>
+            </label>
+          )}
+        </div>
+      )}
+
+      {item.type === 'scholarship' && (
+        <div className="mb-4">
+          <label htmlFor="app-eligibility" className="label-mono mb-1 block">eligibility</label>
+          <textarea
+            id="app-eligibility"
+            value={eligibilityDraft}
+            onChange={(e) => setEligibilityDraft(e.target.value)}
+            onBlur={() => void commitEligibility()}
+            placeholder="GPA, residency, major, citizenship…"
+            rows={2}
+            className="w-full resize-y rounded-lg border border-line bg-raise2 px-3 py-2 text-[12.5px] leading-relaxed text-hi outline-none placeholder:text-low focus:border-ink/25"
+          />
+        </div>
+      )}
 
       <div className="mb-4">
         <p className="label-mono mb-2">requirements</p>

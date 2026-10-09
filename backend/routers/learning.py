@@ -1,9 +1,11 @@
 """Learning Hub router — /api/learning/*."""
 from __future__ import annotations
 
+import uuid
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from backend.services.learning import (
@@ -18,6 +20,7 @@ from backend.services.learning_ai import (
     generate_study_guide_ai,
     socratic_tutor_response,
 )
+from backend.services import deck_import
 from backend.services.srs_engine import Rating
 
 router = APIRouter(prefix="/api/learning", tags=["learning"])
@@ -154,6 +157,134 @@ class SocraticTutorRequest(BaseModel):
 @router.get("/overview")
 def get_overview() -> dict[str, Any]:
     return get_service().get_overview()
+
+
+# ── Deck import (literal paths: must register before /decks/{deck_id}) ──
+MAX_IMPORT_BYTES = deck_import.MAX_ZIP_BYTES  # test override
+_IMPORT_CHUNK = 1024 * 1024
+_IMPORT_FORMATS = {"auto", "apkg", "quizlet", "delimited"}
+_PREVIEW_CARDS = 20
+
+
+async def _read_import(
+    file: UploadFile | None,
+    text: str | None,
+    fmt: str,
+    term_sep: str,
+    row_sep: str,
+) -> "deck_import.ImportResult":
+    if fmt not in _IMPORT_FORMATS:
+        raise HTTPException(status_code=422, detail=f"Unknown format '{fmt}'")
+    limit = MAX_IMPORT_BYTES
+    data: bytes | None = None
+    filename = ""
+    if file is not None and (file.filename or "") != "":
+        filename = (file.filename or "").lower()
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = await file.read(_IMPORT_CHUNK)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                await file.close()
+                raise HTTPException(
+                    status_code=413, detail=f"File too large (max {limit // (1024 * 1024)} MB)"
+                )
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        if not data:
+            data = None
+    if data is None:
+        if text is None or not text.strip():
+            raise HTTPException(status_code=422, detail="Provide a file or pasted text to import")
+        if len(text.encode("utf-8")) > limit:
+            raise HTTPException(
+                status_code=413, detail=f"Text too large (max {limit // (1024 * 1024)} MB)"
+            )
+
+    is_zip = data is not None and data[:4] in (b"PK\x03\x04", b"PK\x05\x06")
+    if fmt == "auto":
+        if is_zip or filename.endswith((".apkg", ".colpkg")):
+            fmt = "apkg"
+        elif filename.endswith(".csv"):
+            fmt = "delimited"
+        else:
+            body = (data.decode("utf-8-sig", errors="replace") if data is not None else text) or ""
+            fmt = "delimited" if deck_import.looks_like_header(body) else "quizlet"
+
+    try:
+        if fmt == "apkg":
+            if data is None:
+                raise ValueError("The .apkg format needs a file upload")
+            return await run_in_threadpool(deck_import.parse_apkg, data)
+        body = data.decode("utf-8-sig", errors="replace") if data is not None else (text or "")
+        if fmt == "delimited":
+            return await run_in_threadpool(deck_import.parse_delimited, body)
+        return await run_in_threadpool(deck_import.parse_quizlet_text, body, term_sep, row_sep)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/import/preview")
+async def import_preview(
+    file: UploadFile | None = File(default=None),
+    text: Optional[str] = Form(default=None),
+    format: str = Form(default="auto"),
+    term_sep: str = Form(default="auto"),
+    row_sep: str = Form(default="auto"),
+) -> dict[str, Any]:
+    res = await _read_import(file, text, format, term_sep, row_sep)
+    return {
+        "cards": res.cards[:_PREVIEW_CARDS],
+        "total": len(res.cards),
+        "warnings": res.warnings,
+        "skipped": res.skipped,
+    }
+
+
+@router.post("/import")
+async def import_deck(
+    deck_title: str = Form(...),
+    file: UploadFile | None = File(default=None),
+    text: Optional[str] = Form(default=None),
+    format: str = Form(default="auto"),
+    term_sep: str = Form(default="auto"),
+    row_sep: str = Form(default="auto"),
+    course_id: Optional[str] = Form(default=None),
+    course_name: Optional[str] = Form(default=None),
+) -> dict[str, Any]:
+    if not deck_title.strip():
+        raise HTTPException(status_code=422, detail="deck_title is required")
+    res = await _read_import(file, text, format, term_sep, row_sep)
+    if not res.cards:
+        raise HTTPException(status_code=422, detail="No importable cards were found")
+    try:
+        # full-length ids: the service's default 8-hex ids collide at large sizes
+        deck = await run_in_threadpool(
+            get_service().create_deck,
+            title=deck_title,
+            course_id=course_id or None,
+            course_name=course_name or None,
+            cards=[
+                {
+                    "id": f"card_{uuid.uuid4().hex}",
+                    "front": c["front"],
+                    "back": c["back"],
+                    "tags": c.get("tags", []),
+                }
+                for c in res.cards
+            ],
+        )
+    except LearningServiceError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {
+        "deck": deck,
+        "imported": len(res.cards),
+        "warnings": res.warnings,
+        "skipped": res.skipped,
+    }
 
 
 # ── Decks & Flashcards ────────────────────────────────────────────────

@@ -118,7 +118,7 @@ class LearningService:
         formatted_cards = []
         if cards:
             for c in cards:
-                card_id = c.get("id") or f"card_{uuid.uuid4().hex[:8]}"
+                card_id = c.get("id") or f"card_{uuid.uuid4().hex}"
                 srs = c.get("srs") or initial_srs_state()
                 formatted_cards.append({
                     "id": card_id,
@@ -180,7 +180,7 @@ class LearningService:
         for d in decks:
             if d.get("id") == deck_id:
                 now_iso = datetime.now(timezone.utc).isoformat()
-                card_id = f"card_{uuid.uuid4().hex[:8]}"
+                card_id = f"card_{uuid.uuid4().hex}"
                 card = {
                     "id": card_id,
                     "front": front.strip(),

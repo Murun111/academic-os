@@ -3,10 +3,17 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+import re
+from datetime import date
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from backend.services.courses import Assignment, Course, CoursesService
+from backend.services.learning_ai import LearningAIBadOutput, LearningAIUnavailable
+from backend.services.syllabus_ai import extract_syllabus
+from backend.services.text_extract import MAX_INPUT_BYTES, MAX_OUTPUT_CHARS, extract_text
 
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 
@@ -135,6 +142,143 @@ def delete_assignment(assignment_id: str):
 
 
 # === courses ===
+
+
+# === syllabus import (literal paths: must be registered before /{course_id}) ===
+
+
+class SyllabusItem(BaseModel):
+    title: str
+    due: Optional[str] = None
+    weight: Optional[float] = None  # percent of grade; out-of-range is dropped with a warning
+    points: Optional[float] = Field(None, ge=0)
+    kind: str = ""
+
+
+class SyllabusNewCourse(BaseModel):
+    name: str = Field(..., min_length=1)
+    term: str = Field(..., min_length=1)
+
+
+class SyllabusApply(BaseModel):
+    course_id: Optional[str] = None
+    new_course: Optional[SyllabusNewCourse] = None
+    items: list[SyllabusItem] = Field(default_factory=list, max_length=500)
+
+
+def _norm_title(t: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
+
+
+@router.post("/syllabus/preview")
+async def syllabus_preview(
+    file: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None),
+    term_start: Optional[str] = Form(None),
+    term_year: Optional[int] = Form(None),
+):
+    if file is not None and file.filename:
+        data = await file.read(MAX_INPUT_BYTES + 1)
+        if len(data) > MAX_INPUT_BYTES:
+            raise HTTPException(status_code=413, detail="file too large (max 25 MB)")
+        try:
+            body = await run_in_threadpool(extract_text, data, file.filename)
+        except ValueError as e:
+            msg = str(e)
+            if "too large" in msg:
+                raise HTTPException(status_code=413, detail=msg)
+            if "unsupported" in msg:
+                raise HTTPException(status_code=415, detail=msg)
+            raise HTTPException(status_code=422, detail=msg)
+    elif text is not None:
+        body = text.strip()
+        if len(body) > MAX_OUTPUT_CHARS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"pasted text too long (max {MAX_OUTPUT_CHARS:,} characters)",
+            )
+    else:
+        raise HTTPException(status_code=422, detail="provide a file or text")
+    if not body.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="the file had no readable text (a scanned PDF needs OCR first)",
+        )
+    try:
+        result = await extract_syllabus(body, term_start=term_start, term_year=term_year)
+    except LearningAIUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except LearningAIBadOutput as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {**result, "text_chars": len(body)}
+
+
+@router.post("/syllabus/apply")
+def syllabus_apply(body: SyllabusApply):
+    svc = get_service()
+    if bool(body.course_id) == bool(body.new_course):
+        raise HTTPException(status_code=422, detail="provide exactly one of course_id or new_course")
+    # validate everything before writing anything
+    clean: list[tuple[str, Optional[str], Optional[float], Optional[float], str]] = []
+    warnings: list[str] = []
+    bad_weights = 0
+    for i, it in enumerate(body.items):
+        title = it.title.strip()
+        if not title:
+            raise HTTPException(status_code=422, detail=f"items[{i}]: title is empty")
+        due = it.due.strip() if it.due else None
+        if due:
+            try:
+                due = date.fromisoformat(due).isoformat()
+            except ValueError:
+                raise HTTPException(status_code=422, detail=f"items[{i}]: due must be YYYY-MM-DD")
+        weight = None
+        if it.weight is not None:
+            if 0 <= it.weight <= 100:
+                weight = it.weight / 100.0  # stored as a 0-1 fraction
+            else:
+                bad_weights += 1
+        clean.append((title, due or None, weight, it.points, it.kind.strip()))
+    if bad_weights:
+        warnings.append(
+            f"{bad_weights} weight(s) outside 0-100% were ignored (points are not percentages).")
+    if body.course_id:
+        course = next((c for c in svc.list_courses() if c.id == body.course_id), None)
+        if course is None:
+            raise HTTPException(status_code=404, detail=f"course {body.course_id!r} not found")
+    else:
+        try:
+            course = svc.add_course(name=body.new_course.name, term=body.new_course.term)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    # multiset of existing (title, due): each incoming item consumes one match, so
+    # re-imports skip duplicates but repeated undated items ("Reading reflection" x3) all land.
+    seen: dict[tuple[str, Optional[str]], int] = {}
+    for a in svc.list_assignments(course_id=course.id):
+        k = (_norm_title(a.title), a.due)
+        seen[k] = seen.get(k, 0) + 1
+    created = skipped = 0
+    for title, due, weight, points, kind in clean:
+        key = (_norm_title(title), due)
+        if seen.get(key, 0) > 0:
+            if not due:  # undated: each existing copy absorbs one incoming item
+                seen[key] -= 1
+            skipped += 1
+            continue
+        note = f"Imported from syllabus ({kind})" if kind and kind != "other" else "Imported from syllabus"
+        if points is not None:
+            note += f", {points:g} pts"
+        svc.add_assignment(
+            course_id=course.id,
+            title=title,
+            due=due,
+            weight=weight,
+            notes=note,
+        )
+        created += 1
+        if due:  # identical dated items inside one batch are duplicates
+            seen[key] = 1
+    return {"ok": True, "course": course.to_dict(), "created": created, "skipped": skipped, "warnings": warnings}
 
 
 @router.get("")

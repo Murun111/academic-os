@@ -201,9 +201,13 @@ class OllamaBackend(Backend):
             headers={"Content-Type": "application/json"},
         )
         t0 = time.time()
-        try:
+
+        def _post() -> dict:
             with urllib.request.urlopen(req, timeout=self.chat_timeout) as r:
-                d = json.loads(r.read())
+                return json.loads(r.read())
+
+        try:
+            d = await asyncio.to_thread(_post)
         except urllib.error.HTTPError as e:
             # Ollama IS running but rejected the request — almost always an
             # unknown model name. HTTPError subclasses URLError, so without

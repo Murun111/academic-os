@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ArrowLeft, Check, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Check, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { learning, isUnavailable, isLearningApiError, type Deck } from '../../lib/learningApi'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../ui'
+import { ImportDeck } from './ImportDeck'
 
 const FIELD =
   'w-full rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[13px] text-hi placeholder:text-low focus:border-ink/30 focus:outline-none'
@@ -54,6 +55,7 @@ export function DecksPanel() {
   const [openLoading, setOpenLoading] = useState(false)
 
   const [newTitle, setNewTitle] = useState('')
+  const [importing, setImporting] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [confirmDeckId, setConfirmDeckId] = useState<string | null>(null)
@@ -259,10 +261,24 @@ export function DecksPanel() {
   /* -------------------------------- deck list ------------------------------- */
   return (
     <Panel>
-      <PanelHead label="decks" right={<Mono className="text-low">{decks.length} total</Mono>} />
+      <PanelHead
+        label="decks"
+        right={
+          <span className="flex items-center gap-2">
+            <Mono className="text-low">{decks.length} total</Mono>
+            <Btn onClick={() => setImporting((v) => !v)}>
+              <span className="flex items-center gap-1.5" aria-expanded={importing}>
+                <Upload size={13} /> {importing ? 'Close import' : 'Import'}
+              </span>
+            </Btn>
+          </span>
+        }
+      />
       <div className="px-5 pb-5">
         {errorBanner(error)}
         {errorBanner(actionError)}
+
+        {importing && <ImportDeck onImported={() => void loadList()} />}
 
         <form onSubmit={(e) => void createDeck(e)} className="mb-4 flex items-center gap-2" aria-label="Create deck">
           <input

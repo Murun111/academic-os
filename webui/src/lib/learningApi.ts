@@ -382,6 +382,68 @@ function qs(params: Record<string, string | undefined>): string {
 
 const enc = encodeURIComponent
 
+/* ------------------------------ deck import ------------------------------ */
+
+export type ImportFormat = 'auto' | 'apkg' | 'quizlet' | 'delimited'
+
+export interface ImportInput {
+  file?: File
+  text?: string
+  format?: ImportFormat
+  term_sep?: string
+  row_sep?: string
+}
+
+export interface ImportCard {
+  front: string
+  back: string
+  tags: string[]
+}
+
+export interface ImportPreview {
+  cards: ImportCard[]
+  total: number
+  warnings: string[]
+  skipped: number
+}
+
+export interface ImportDeckInput extends ImportInput {
+  deck_title: string
+  course_id?: string
+  course_name?: string
+}
+
+export interface ImportDeckResult {
+  deck: Deck
+  imported: number
+  warnings: string[]
+  skipped: number
+}
+
+function importForm(input: ImportInput & Partial<ImportDeckInput>): FormData {
+  const f = new FormData()
+  if (input.file) f.append('file', input.file)
+  if (input.text) f.append('text', input.text)
+  f.append('format', input.format ?? 'auto')
+  if (input.term_sep) f.append('term_sep', input.term_sep)
+  if (input.row_sep) f.append('row_sep', input.row_sep)
+  if (input.deck_title !== undefined) f.append('deck_title', input.deck_title)
+  if (input.course_id) f.append('course_id', input.course_id)
+  if (input.course_name) f.append('course_name', input.course_name)
+  return f
+}
+
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  let r: Response
+  try {
+    r = await fetch(`${BASE}${path}`, { method: 'POST', body: form })
+  } catch (e) {
+    throw new LearningApiError(0, e instanceof Error ? e.message : 'Network error')
+  }
+  if (!r.ok) throw new LearningApiError(r.status, await errorDetail(r))
+  return (await r.json()) as T
+}
+
 /* ---------------------------------- client -------------------------------- */
 
 export const learning = {
@@ -401,6 +463,12 @@ export const learning = {
   dueCards: (deckId?: string) => request<Card[]>('GET', `/due-cards${qs({ deck_id: deckId })}`),
   reviewCard: (deckId: string, cardId: string, rating: SrsRating) =>
     request<Card>('POST', `/decks/${enc(deckId)}/cards/${enc(cardId)}/review`, { rating }),
+
+  // import (multipart; preview saves nothing)
+  importPreview: (input: ImportInput) =>
+    postForm<ImportPreview>('/import/preview', importForm(input)),
+  importDeck: (input: ImportDeckInput) =>
+    postForm<ImportDeckResult>('/import', importForm(input)),
 
   // quizzes
   quizzes: (courseId?: string) =>

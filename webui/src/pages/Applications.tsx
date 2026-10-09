@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Calendar, Landmark, Plus, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, Landmark, Plus, Search, Upload } from 'lucide-react'
 import {
   applicationsApi, APPLICATION_STATUSES, APPLICATION_TYPES, requirementsProgress,
-  type Application, type ApplicationCosts, type ApplicationStatus, type ApplicationType,
+  type Application, type ApplicationCosts, type ScholarshipSummary, type ApplicationStatus, type ApplicationType,
 } from '../lib/applicationsApi'
 import { useOs } from '../lib/store'
 import { stageConfig } from '../lib/stageConfig'
 import { trackApplies, trackConfig } from '../lib/trackConfig'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
 import { ApplicationDrawer, DeadlineLabel, STATUS_LABEL } from '../components/ApplicationDrawer'
+import { ScholarshipImport } from '../components/ScholarshipImport'
 import { createFafsa, FAFSA_STAGES, ScholarshipScout } from '../components/ScholarshipScout'
 
 // human labels for the type filter tabs
@@ -21,8 +22,10 @@ const TYPE_LABEL: Record<ApplicationType, string> = {
   exchange: 'Exchange',
 }
 
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+
 function formatUsd(amount: number): string {
-  return `$${Math.round(amount).toLocaleString()}`
+  return USD.format(Math.round(amount))
 }
 
 export function Applications() {
@@ -48,6 +51,8 @@ export function Applications() {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<ApplicationStatus | null>(null)
   const [showScout, setShowScout] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const [summary, setSummary] = useState<ScholarshipSummary | null>(null)
 
   // every applicationsApi call degrades to a safe fallback, so this never throws
   const load = useCallback(async () => {
@@ -57,6 +62,7 @@ export function Applications() {
     setItems(list)
     setDeadlines(soon)
     setCosts(costsRes)
+    setSummary(await applicationsApi.scholarshipSummary())
     setLoading(false)
   }, [])
 
@@ -83,6 +89,9 @@ export function Applications() {
   const [typeFilter, setTypeFilter] = useState<ApplicationType | 'all' | 'archived'>('all')
   const activeItems = items.filter((i) => !i.archived)
   const archivedItems = items.filter((i) => i.archived)
+  const showScholarshipStrip =
+    (typeFilter === 'all' || typeFilter === 'scholarship') &&
+    activeItems.some((i) => i.type === 'scholarship')
   const presentTypes = APPLICATION_TYPES.filter((t) => activeItems.some((i) => i.type === t))
   const visible =
     typeFilter === 'archived' ? archivedItems
@@ -189,6 +198,9 @@ export function Applications() {
               <span className="flex items-center gap-1.5"><Search size={13} /> Find scholarships</span>
             </Btn>
           </span>
+          <Btn onClick={() => setShowImport((s) => !s)}>
+            <span className="flex items-center gap-1.5"><Upload size={13} /> {showImport ? 'Close import' : 'Import CSV'}</span>
+          </Btn>
           <span data-tour="apps-add">
             <Btn kind="primary" onClick={() => setShowForm((s) => !s)}>
               <span className="flex items-center gap-1.5"><Plus size={13} /> Add application</span>
@@ -198,6 +210,12 @@ export function Applications() {
       </div>
 
       <ScholarshipScout show={showScout} stage={stage} />
+
+      {showImport && (
+        <div className="mb-6">
+          <ScholarshipImport onDone={() => void load()} />
+        </div>
+      )}
 
       <AnimatePresence>
         {showForm && (
@@ -276,6 +294,53 @@ export function Applications() {
             )
           })}
         </div>
+      )}
+
+      {showScholarshipStrip && (
+        <section aria-label="Scholarship summary" className="mb-6">
+          <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+            {[
+              { label: 'potential', value: formatUsd(summary?.potential_total ?? 0) },
+              { label: 'won', value: `${formatUsd(summary?.won_total ?? 0)} (${summary?.won_count ?? 0})` },
+              { label: 'pending', value: String(summary?.pending_count ?? 0) },
+              {
+                label: 'next deadline',
+                value: summary?.next_deadlines[0]
+                  ? `${summary.next_deadlines[0].name} · ${summary.next_deadlines[0].deadline}`
+                  : 'none',
+              },
+            ].map((t) => (
+              <Panel key={t.label} className="px-4 py-3">
+                <p className="label-mono mb-1">{t.label}</p>
+                <p className="truncate text-[15px] font-semibold text-hi" title={t.value}>{t.value}</p>
+              </Panel>
+            ))}
+          </div>
+          <Panel>
+            <PanelHead label="essays reused" right={<Mono className="text-low">{summary?.essays.length ?? 0} linked</Mono>} />
+            <div className="flex flex-col gap-2 px-5 pb-4">
+              {(summary?.essays.length ?? 0) === 0 && (
+                <EmptyState title="No essays linked yet." hint="Link an essay to a scholarship from its drawer." />
+              )}
+              {summary?.essays.map((e) => (
+                <div key={e.document_id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-[12.5px] text-hi">{e.title || 'Untitled document'}</span>
+                  <span className="flex flex-wrap gap-1.5">
+                    {e.used_by.map((u) => (
+                      <Link
+                        key={u.id}
+                        to={`/applications?open=${encodeURIComponent(u.id)}`}
+                        className="rounded-full border border-line px-2.5 py-0.5 text-[11.5px] text-mid hover:border-ink/15 hover:text-hi"
+                      >
+                        {u.name}
+                      </Link>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </section>
       )}
 
       <Panel className="mb-6">

@@ -7,7 +7,10 @@ rewrite on update, uuid4 hex ids, ISO date/datetime strings.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -37,6 +40,10 @@ class Application:
     app_fee: Optional[float] = None  # application fee in USD
     fee_waived: bool = False
     archived: bool = False  # finished/abandoned — hidden from the board, kept for export
+    # Additive scholarship fields (no CURRENT_FORMAT bump: old records just default).
+    renewable: bool = False
+    awarded_amount: Optional[float] = None  # what was actually won
+    eligibility: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -186,6 +193,9 @@ class ApplicationsService:
             amount=amount,
             app_fee=app_fee,
             fee_waived=bool(fields.get("fee_waived") or False),
+            renewable=bool(fields.get("renewable") or False),
+            awarded_amount=self._validate_amount(fields.get("awarded_amount"), "awarded_amount"),
+            eligibility=fields.get("eligibility") or "",
             created_at=now,
             updated_at=now,
         )
@@ -217,14 +227,20 @@ class ApplicationsService:
                     it.requirements = [self._normalize_requirement(r) for r in fields["requirements"]]
                 if fields.get("document_ids") is not None:
                     it.document_ids = list(fields["document_ids"])
-                if fields.get("amount") is not None:
+                if "amount" in fields:
                     it.amount = self._validate_amount(fields["amount"], "amount")
-                if fields.get("app_fee") is not None:
+                if "app_fee" in fields:
                     it.app_fee = self._validate_amount(fields["app_fee"], "app_fee")
                 if fields.get("fee_waived") is not None:
                     it.fee_waived = bool(fields["fee_waived"])
                 if fields.get("archived") is not None:
                     it.archived = bool(fields["archived"])
+                if fields.get("renewable") is not None:
+                    it.renewable = bool(fields["renewable"])
+                if "awarded_amount" in fields:
+                    it.awarded_amount = self._validate_amount(fields["awarded_amount"], "awarded_amount")
+                if fields.get("eligibility") is not None:
+                    it.eligibility = str(fields["eligibility"])
                 it.updated_at = self._now_iso()
                 self._write_all(items)
                 return it
@@ -328,7 +344,7 @@ class ApplicationsService:
             elif i.status != "decision":
                 fees_due += fee
 
-            if i.type == "scholarship" and i.status != "decision":
+            if i.type == "scholarship" and i.status != "decision" and not i.archived:
                 potential_awards += amount
 
             if i.decision_result == "accepted":
@@ -345,3 +361,171 @@ class ApplicationsService:
             "won_awards": won_awards,
             "by_type": by_type,
         }
+
+    # === scholarships ===
+
+    def scholarship_summary(self, doc_titles: Optional[dict] = None) -> dict:
+        """Scholarship tracker rollup. `doc_titles` maps document_id -> title
+        (best-effort; None skips the essay-reuse section's titles)."""
+        items = [i for i in self._read_all() if i.type == "scholarship"]
+        count_by_status: dict[str, int] = {}
+        for i in items:
+            count_by_status[i.status] = count_by_status.get(i.status, 0) + 1
+        live = [i for i in items if not i.archived]
+        potential_total = sum(i.amount or 0.0 for i in live if i.status != "decision")
+        won = [i for i in items if i.awarded_amount]
+        won_total = sum(i.awarded_amount or 0.0 for i in won)
+        pending_count = sum(1 for i in live if i.status != "decision")
+        today = date.today()
+        upcoming = []
+        for i in live:
+            if not i.deadline or i.status == "decision":
+                continue
+            try:
+                d = date.fromisoformat(i.deadline)
+            except ValueError:
+                continue
+            if d >= today:
+                upcoming.append((d, i))
+        upcoming.sort(key=lambda t: t[0])
+        next_deadlines = [
+            {"id": i.id, "name": i.name, "deadline": i.deadline, "amount": i.amount}
+            for _, i in upcoming[:5]
+        ]
+        # doc_titles values: a title str, or (title, linked_application_ids).
+        titles: dict[str, str] = {}
+        links: dict[str, list] = {}
+        for doc_id, v in (doc_titles or {}).items():
+            if isinstance(v, (tuple, list)):
+                titles[doc_id] = v[0] if v else ""
+                links[doc_id] = list(v[1]) if len(v) > 1 and v[1] else []
+            else:
+                titles[doc_id] = v or ""
+        by_doc: dict[str, list] = {}
+        live_by_id = {i.id: i for i in live}
+        for i in live:
+            for doc_id in dict.fromkeys(i.document_ids):
+                by_doc.setdefault(doc_id, []).append({"id": i.id, "name": i.name})
+        for doc_id, app_ids in links.items():
+            seen = {u["id"] for u in by_doc.get(doc_id, [])}
+            for aid in dict.fromkeys(app_ids):
+                a = live_by_id.get(aid)
+                if a and aid not in seen:
+                    by_doc.setdefault(doc_id, []).append({"id": a.id, "name": a.name})
+        essays = [
+            {"document_id": doc_id, "title": titles.get(doc_id, ""), "used_by": used}
+            for doc_id, used in by_doc.items()
+            if used
+        ]
+        essays.sort(key=lambda e: (-len(e["used_by"]), e["document_id"]))
+        return {
+            "count_by_status": count_by_status,
+            "potential_total": potential_total,
+            "won_total": won_total,
+            "won_count": len(won),
+            "pending_count": pending_count,
+            "next_deadlines": next_deadlines,
+            "essays": essays,
+        }
+
+    def import_scholarships_csv(self, text: str, dry_run: bool = False) -> dict:
+        """Import scholarships from CSV text. Bad rows are reported, never fatal."""
+        text = (text or "").lstrip("\ufeff")
+        rows = list(csv.reader(io.StringIO(text)))
+        rows = [r for r in rows if any(c.strip() for c in r)]
+        result: dict = {"created": 0, "skipped_duplicates": 0, "errors": [], "rows": []}
+        if not rows:
+            result["errors"].append({"row": 0, "message": "empty CSV"})
+            return result
+        cols: dict[str, int] = {}
+        for idx, h in enumerate(rows[0]):
+            canon = _CSV_ALIASES.get(re.sub(r"[^a-z]", "", h.lower()))
+            if canon and canon not in cols:
+                cols[canon] = idx
+        if "name" not in cols:
+            result["errors"].append({"row": 1, "message": "no name/title/scholarship column in header"})
+            return result
+
+        existing = {
+            _dedupe_key(i.name, i.org, i.deadline) for i in self._read_all() if i.type == "scholarship"
+        }
+        seen = set(existing)
+        header_len = len(rows[0])
+        for n, r in enumerate(rows[1:], start=2):
+            if len(r) > header_len and any(c.strip() for c in r[header_len:]):
+                result["errors"].append({
+                    "row": n,
+                    "message": f"Row {n} has {len(r)} fields but the header has {header_len}; quote values that contain commas",
+                })
+                continue
+
+            def cell(k: str) -> str:
+                j = cols.get(k)
+                return r[j].strip() if j is not None and j < len(r) else ""
+
+            name = cell("name")
+            if not name:
+                result["errors"].append({"row": n, "message": "missing name"})
+                continue
+            deadline = None
+            if cell("deadline"):
+                deadline = parse_flexible_date(cell("deadline"))
+                if deadline is None:
+                    result["errors"].append({"row": n, "message": f"unparseable deadline {cell('deadline')!r}"})
+                    continue
+            amount = None
+            if cell("amount"):
+                try:
+                    amount = float(re.sub(r"[$,\s]", "", cell("amount")))
+                    if amount < 0:
+                        raise ValueError
+                except ValueError:
+                    result["errors"].append({"row": n, "message": f"invalid amount {cell('amount')!r}"})
+                    continue
+            org = cell("org")
+            key = _dedupe_key(name, org, deadline)
+            if key in seen:
+                result["skipped_duplicates"] += 1
+                continue
+            seen.add(key)
+            parsed = {
+                "name": name, "org": org, "type": "scholarship", "amount": amount,
+                "deadline": deadline, "url": cell("url"), "notes": cell("notes"),
+                "eligibility": cell("eligibility"),
+                "renewable": cell("renewable").lower() in ("y", "yes", "true", "1", "x"),
+            }
+            result["rows"].append({"row": n, **parsed})
+            if not dry_run:
+                self.add(**parsed)
+                result["created"] += 1
+        if dry_run:
+            result["created"] = 0
+        else:
+            result.pop("rows")
+        return result
+
+
+_CSV_ALIASES = {
+    "name": "name", "title": "name", "scholarship": "name", "scholarshipname": "name",
+    "organization": "org", "org": "org", "provider": "org", "sponsor": "org",
+    "amount": "amount", "award": "amount", "awardamount": "amount",
+    "deadline": "deadline", "duedate": "deadline", "due": "deadline",
+    "url": "url", "link": "url", "website": "url",
+    "notes": "notes", "note": "notes",
+    "eligibility": "eligibility", "renewable": "renewable",
+}
+
+
+def _dedupe_key(name: str, org: str, deadline: Optional[str]) -> tuple:
+    return ((name or "").strip().lower(), (org or "").strip().lower(), deadline or "")
+
+
+def parse_flexible_date(s: str) -> Optional[str]:
+    """ISO, M/D/YYYY, or 'Month D, YYYY' -> ISO date string; None if unparseable."""
+    s = (s or "").strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None

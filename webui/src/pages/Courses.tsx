@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, FileText, Plus } from 'lucide-react'
 import {
   coursesApi, gradeTone,
   type Assignment, type AssignmentStatus, type CourseSummary,
 } from '../lib/coursesApi'
 import { DEFAULT_CREDITS } from '../lib/gpa'
 import { Btn, EmptyState, Mono, Panel, PanelHead, Pill } from '../components/ui'
+import { SyllabusImport } from '../components/SyllabusImport'
 import { GpaPanel, WhatIf } from '../components/GpaPanel'
 import {
   AddAssignmentForm, AddCourseForm, AssignmentRow, ConfirmDelete, EditText,
@@ -26,6 +27,7 @@ export function Courses() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [showAddCourse, setShowAddCourse] = useState(false)
+  const [showSyllabus, setShowSyllabus] = useState(false)
   const [addingAssignmentFor, setAddingAssignmentFor] = useState<string | null>(null)
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all')
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -162,12 +164,25 @@ export function Courses() {
           <p className="label-mono mb-1">courses · assignments · grades</p>
           <h1 className="text-[24px] font-semibold tracking-[-0.01em]">Courses</h1>
         </div>
-        <span data-tour="courses-add">
-          <Btn kind="primary" onClick={() => setShowAddCourse((v) => !v)}>
-            <span className="flex items-center gap-1.5"><Plus size={13} /> Add course</span>
+        <div className="flex items-center gap-2">
+          <Btn onClick={() => setShowSyllabus((v) => !v)}>
+            <span className="flex items-center gap-1.5"><FileText size={13} /> Import syllabus</span>
           </Btn>
-        </span>
+          <span data-tour="courses-add">
+            <Btn kind="primary" onClick={() => setShowAddCourse((v) => !v)}>
+              <span className="flex items-center gap-1.5"><Plus size={13} /> Add course</span>
+            </Btn>
+          </span>
+        </div>
       </div>
+
+      {showSyllabus && (
+        <SyllabusImport
+          courses={active}
+          onClose={() => setShowSyllabus(false)}
+          onDone={() => { void load(); if (expanded) void loadAssignments(expanded) }}
+        />
+      )}
 
       <GpaPanel courses={active} allCourses={courses} />
 

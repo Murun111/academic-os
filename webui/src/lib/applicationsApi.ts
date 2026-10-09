@@ -37,6 +37,9 @@ export interface Application {
   app_fee: number | null
   fee_waived: boolean
   archived: boolean
+  renewable: boolean
+  awarded_amount: number | null
+  eligibility: string
   created_at: string
   updated_at: string
 }
@@ -51,6 +54,9 @@ export interface ApplicationCreateInput {
   amount?: number | null
   app_fee?: number | null
   fee_waived?: boolean
+  renewable?: boolean
+  awarded_amount?: number | null
+  eligibility?: string
 }
 
 export interface ApplicationUpdateInput {
@@ -66,6 +72,9 @@ export interface ApplicationUpdateInput {
   app_fee?: number | null
   fee_waived?: boolean
   archived?: boolean
+  renewable?: boolean
+  awarded_amount?: number | null
+  eligibility?: string
 }
 
 export interface ApplicationCosts {
@@ -74,6 +83,40 @@ export interface ApplicationCosts {
   potential_awards: number
   won_awards: number
   by_type: Record<string, { count: number; amount: number }>
+}
+
+export interface ScholarshipSummary {
+  count_by_status: Record<string, number>
+  potential_total: number
+  won_total: number
+  won_count: number
+  pending_count: number
+  next_deadlines: { id: string; name: string; deadline: string; amount: number | null }[]
+  essays: { document_id: string; title: string; used_by: { id: string; name: string }[] }[]
+}
+
+export interface ScholarshipImportRow {
+  row: number
+  name: string
+  org: string
+  amount: number | null
+  deadline: string | null
+  url: string
+  notes: string
+  eligibility: string
+  renewable: boolean
+}
+
+export interface ScholarshipImportResult {
+  created: number
+  skipped_duplicates: number
+  errors: { row: number; message: string }[]
+  rows?: ScholarshipImportRow[] // present on dry runs only
+}
+
+const ZERO_SUMMARY: ScholarshipSummary = {
+  count_by_status: {}, potential_total: 0, won_total: 0, won_count: 0,
+  pending_count: 0, next_deadlines: [], essays: [],
 }
 
 const ZERO_COSTS: ApplicationCosts = {
@@ -130,6 +173,30 @@ export const applicationsApi = {
   },
 
   costs: (): Promise<ApplicationCosts> => aget<ApplicationCosts>('/costs', ZERO_COSTS),
+
+  scholarshipSummary: (): Promise<ScholarshipSummary> =>
+    aget<ScholarshipSummary>('/scholarships/summary', ZERO_SUMMARY),
+
+  // Upload a CSV file (or pasted text). Returns {ok:false,error} with the server's detail if the request failed.
+  importScholarshipsCsv: async (
+    source: File | string, dryRun = false,
+  ): Promise<ScholarshipImportResult | { ok: false; error: string }> => {
+    try {
+      const form = new FormData()
+      if (typeof source === 'string') form.set('text', source)
+      else form.set('file', source)
+      if (dryRun) form.set('dry_run', 'true')
+      const r = await fetch('/api/applications/scholarships/import-csv', { method: 'POST', body: form })
+      if (!r.ok) {
+        let detail = ''
+        try { const j = await r.json(); if (typeof j?.detail === 'string') detail = j.detail } catch { /* non-JSON body */ }
+        return { ok: false, error: detail || `Import failed (HTTP ${r.status}).` }
+      }
+      return (await r.json()) as ScholarshipImportResult
+    } catch {
+      return { ok: false, error: 'Import failed. Is the backend running?' }
+    }
+  },
 
   create: async (input: ApplicationCreateInput): Promise<Application | null> => {
     const res = await amutate<ItemReply | null>('', 'POST', input, null)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -56,6 +56,9 @@ class ApplicationCreate(BaseModel):
     amount: Optional[float] = Field(default=None, ge=0)
     app_fee: Optional[float] = Field(default=None, ge=0)
     fee_waived: bool = False
+    renewable: bool = False
+    awarded_amount: Optional[float] = Field(default=None, ge=0)
+    eligibility: str = ""
 
 
 class ApplicationUpdate(BaseModel):
@@ -73,6 +76,9 @@ class ApplicationUpdate(BaseModel):
     app_fee: Optional[float] = Field(default=None, ge=0)
     fee_waived: Optional[bool] = None
     archived: Optional[bool] = None
+    renewable: Optional[bool] = None
+    awarded_amount: Optional[float] = Field(default=None, ge=0)
+    eligibility: Optional[str] = None
 
 
 class RequirementCreate(BaseModel):
@@ -99,6 +105,81 @@ def deadlines(days: int = Query(30)) -> dict:
 def costs() -> dict:
     svc = get_service()
     return svc.costs()
+
+
+@router.get("/scholarships/summary")
+def scholarships_summary() -> dict:
+    titles: dict = {}
+    try:  # best-effort cross-module lookup, like the agenda contract
+        from backend.routers.documents import get_service as docs_service
+
+        titles = {
+            d.id: (d.title, list(d.linked_application_ids)) for d in docs_service().list_all()
+        }
+    except Exception:
+        titles = {}
+    return get_service().scholarship_summary(titles)
+
+
+def _decode_csv(raw: bytes) -> Optional[str]:
+    """Strict UTF-8 (BOM ok), then cp1252 (Excel's plain CSV). None if neither works."""
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            return raw.decode("cp1252")
+        except UnicodeDecodeError:
+            return None
+
+
+MAX_CSV_BYTES = 5 * 1024 * 1024
+_TOO_BIG = JSONResponse(
+    {"error": "too_large", "detail": "File too large (max 5 MB)"}, status_code=413
+)
+
+
+async def _read_capped(up) -> Optional[bytes]:
+    buf = bytearray()
+    while True:
+        chunk = await up.read(64 * 1024)
+        if not chunk:
+            return bytes(buf)
+        buf.extend(chunk)
+        if len(buf) > MAX_CSV_BYTES:
+            return None
+
+
+@router.post("/scholarships/import-csv")
+async def import_scholarships_csv(request: Request, dry_run: bool = Query(False)) -> dict:
+    ctype = request.headers.get("content-type", "")
+    text = ""
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        up = form.get("file")
+        if up is not None and hasattr(up, "read"):
+            raw = await _read_capped(up)
+            if raw is None:
+                return _TOO_BIG
+            text = _decode_csv(raw)
+        elif form.get("text"):
+            text = str(form.get("text"))
+            if len(text.encode()) > MAX_CSV_BYTES:
+                return _TOO_BIG
+        if str(form.get("dry_run", "")).lower() in ("1", "true", "yes"):
+            dry_run = True
+    else:
+        raw = await request.body()
+        if len(raw) > MAX_CSV_BYTES:
+            return _TOO_BIG
+        text = _decode_csv(raw)
+    if text is None:
+        return JSONResponse(
+            {"error": "bad_encoding", "detail": "could not read the file; save as CSV UTF-8"},
+            status_code=422,
+        )
+    if not text.strip():
+        return JSONResponse({"error": "empty_csv", "detail": "no CSV content"}, status_code=422)
+    return get_service().import_scholarships_csv(text, dry_run=dry_run)
 
 
 @router.get("")
@@ -132,6 +213,9 @@ def create_application(body: ApplicationCreate) -> dict:
             amount=body.amount,
             app_fee=body.app_fee,
             fee_waived=body.fee_waived,
+            renewable=body.renewable,
+            awarded_amount=body.awarded_amount,
+            eligibility=body.eligibility,
         )
     except ValueError as e:
         return JSONResponse({"error": "invalid_application", "detail": str(e)}, status_code=422)
