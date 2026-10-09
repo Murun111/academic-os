@@ -109,3 +109,13 @@ Environment variables:
 - `BIND_PORT` — HTTP listen port (default: `7878`)
 
 Frontend must be built (`npm run build`) for the backend to serve it at `/`. Dev flow uses Vite proxy to `http://localhost:7878` for `/api` and `/ws`.
+
+**Anki import (`services/deck_import.py`):** `.apkg`/`.colpkg` is a zip holding `collection.anki21b` (new, zstd-compressed sqlite), `collection.anki21`, or `collection.anki2` (legacy), tried in that order. zstd uses stdlib `compression.zstd` (Python 3.14), so no dependency; a missing/old Python surfaces as a ValueError, not a crash. Zip size caps (100 MB in, 300 MB expanded) guard against zip bombs.
+
+**PDF text extraction (`services/text_extract.py`):** stdlib-only parser; `pypdf` is used only if it happens to be installed (never in requirements) and falls back to the stdlib path on any non-ValueError failure. Scanned/image-only PDFs yield empty text. Do not add pypdf to requirements.
+
+**Syllabus AI (`services/syllabus_ai.py`):** every item the model returns must carry a `source_line` that actually appears in the uploaded text (whitespace/case-normalized); items without a verifiable source are dropped and counted, never kept. This is the anti-hallucination guard, so do not loosen it.
+
+**Scholarship CSV import:** `POST /api/applications/scholarships/import-csv` (literal path, registered before `/{id}`); accepts raw CSV body, multipart `file`, or multipart `text`; `dry_run` via query or form. Non-UTF-8 falls back to cp1252.
+
+**Application scholarship fields are additive:** new optional fields on Application default in `from_dict`, so no `CURRENT_FORMAT` bump. Older builds would drop them on save, which is the data-stamp risk only if the schema stops being backward-safe.

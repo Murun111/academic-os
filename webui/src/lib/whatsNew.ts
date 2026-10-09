@@ -15,6 +15,16 @@ export interface WhatsNewEntry {
 // not the technical changelog. Keep entries short; only versions with a
 // user-visible change need one.
 export const CHANGELOG: Record<string, WhatsNewEntry> = {
+  '0.6.0': {
+    title: "What's new",
+    items: [
+      'New Learning tab: flashcards that come back right before you forget them, quizzes, study guides, a focus timer, and an AI tutor that runs on your laptop.',
+      'Bring your flashcards with you. Import decks from Anki or paste a Quizlet set.',
+      'Upload a syllabus and Academic OS reads the due dates for you. Check the list, then add them to a course in one click.',
+      'Scholarships get their own summary: money you could still win, money you have won, the next deadline, and which essays you are reusing. You can import a list from a spreadsheet (CSV).',
+      'Starting a resume? Pick a template made for your stage in Documents, then ask the resume coach what to fix.',
+    ],
+  },
   '0.5.0': {
     title: "What's new",
     items: [
@@ -26,10 +36,10 @@ export const CHANGELOG: Record<string, WhatsNewEntry> = {
   '0.4.1': {
     title: "What's new",
     items: [
-      'Updates now install themselves — one click in Settings, no more downloading and dragging.',
+      'Updates now install themselves. One click in Settings, no more downloading and dragging.',
       'The Mac app is signed by Apple, so it opens with no security warning.',
       'Chat answers stream in as they are written instead of appearing all at once.',
-      'A round of privacy and security hardening under the hood — your data still never leaves your computer.',
+      'A round of privacy and security hardening under the hood. Your data still never leaves your computer.',
     ],
   },
 }
