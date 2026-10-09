@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm, cache-dependency-path: webui/package-lock.json }
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with: { python-version: '3.14' }
       - name: Install deps
         run: |
           cd webui && npm ci && cd ..
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm, cache-dependency-path: webui/package-lock.json }
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with: { python-version: '3.14' }
       - name: Build webui
         shell: bash
         run: cd webui && npm ci && VITE_API_MODE=real npm run build
@@ -122,7 +122,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm, cache-dependency-path: webui/package-lock.json }
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with: { python-version: '3.14' }
       - name: Build webui
         run: cd webui && npm ci && VITE_API_MODE=real npm run build
       - name: Install backend deps

@@ -210,7 +210,13 @@ def _read_member(zf: zipfile.ZipFile, name: str) -> bytes:
 
 
 def _zstd_decompress(data: bytes) -> bytes:
-    from compression import zstd
+    try:
+        from compression import zstd  # stdlib from Python 3.14
+    except ImportError as e:
+        raise ValueError(
+            "This deck uses Anki's newer compressed format, which this build can't read. "
+            "In Anki, export again with \"Support older Anki versions\" checked."
+        ) from e
 
     try:
         d = zstd.ZstdDecompressor()
