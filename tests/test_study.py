@@ -167,6 +167,31 @@ def test_agenda_merges_and_sorts_across_kinds(client: TestClient, monkeypatch):
     assert asg_item["meta"] == {"course_id": "cs101", "status": "pending"}
 
 
+def test_agenda_dates_and_titles_from_real_services(client: TestClient):
+    # Regression: the agenda read `date`/`title`, but Assignment stores `due` and
+    # Application stores `name`/`deadline` — real items landed undated and untitled,
+    # so they never appeared in the week view. Uses the real services, no fakes.
+    from backend.services.applications import ApplicationsService
+    from backend.services.courses import CoursesService
+    from backend.vault import agentic_os_dir
+
+    today = date.today()
+    due = (today + timedelta(days=2)).isoformat()
+    deadline = (today + timedelta(days=4)).isoformat()
+    courses = CoursesService(data_dir=agentic_os_dir() / "data" / "courses")
+    course = courses.add_course(name="Physics", term="Fall")
+    courses.add_assignment(course_id=course.id, title="Kinematics Test", due=due)
+    ApplicationsService(data_dir=agentic_os_dir() / "data" / "applications").add(
+        name="Foo U", type="undergrad", deadline=deadline
+    )
+
+    items = client.get("/api/study/agenda", params={"days": 7}).json()["items"]
+    asg = next(i for i in items if i["kind"] == "assignment")
+    app = next(i for i in items if i["kind"] == "application")
+    assert (asg["title"], asg["date"]) == ("Kinematics Test", due)
+    assert (app["title"], app["date"]) == ("Foo U", deadline)
+
+
 def test_agenda_resilient_to_foreign_service_failure(client: TestClient, monkeypatch):
     client.post("/api/study/tasks", json={"title": "Only mine", "day": date.today().isoformat()})
 

@@ -274,8 +274,9 @@ class StudyService:
                     {
                         "kind": "application",
                         "id": _field(d, "id"),
-                        "title": _field(d, "title"),
-                        "date": _field(d, "date"),
+                        # Application stores name/deadline; title/date kept as fallbacks.
+                        "title": _field(d, "name") or _field(d, "title"),
+                        "date": _field(d, "deadline") or _field(d, "date"),
                         "meta": {
                             "type": _field(d, "type"),
                             "status": _field(d, "status"),
@@ -304,7 +305,8 @@ class StudyService:
                         "kind": "assignment",
                         "id": _field(a, "id"),
                         "title": _field(a, "title"),
-                        "date": _field(a, "date"),
+                        # Assignment stores its due date as `due`.
+                        "date": _field(a, "due") or _field(a, "date"),
                         "meta": {
                             "course_id": _field(a, "course_id"),
                             "status": _field(a, "status"),
