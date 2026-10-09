@@ -55,22 +55,30 @@ const _mq = window.matchMedia('(prefers-color-scheme: dark)')
 
 function applyTheme(pref: ThemePref) {
   const resolved = pref === 'system' ? (_mq.matches ? 'dark' : 'light') : pref
-  document.documentElement.dataset.theme = resolved
+  const root = document.documentElement
+  if (root.dataset.theme === resolved) return
+  // Flip every color in one frame: without this, elements with
+  // transition-colors fade while the rest snap, which reads as a glitch.
+  root.classList.add('theme-switching')
+  root.dataset.theme = resolved
   document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', resolved)
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')))
+}
+
+function readPref(): ThemePref {
+  try {
+    const saved = localStorage.getItem(THEME_KEY)
+    return saved === 'dark' || saved === 'light' ? saved : 'system'
+  } catch {
+    return 'system'
+  }
 }
 
 function initialTheme(): ThemePref {
-  const saved = localStorage.getItem(THEME_KEY)
-  const pref: ThemePref = saved === 'dark' || saved === 'light' ? saved : 'system'
+  const pref = readPref()
   applyTheme(pref)
   return pref
 }
-
-// follow the OS live: when macOS flips appearance and the pref is "system",
-// restyle immediately — no reload needed
-_mq.addEventListener('change', () => {
-  if ((localStorage.getItem(THEME_KEY) ?? 'system') === 'system') applyTheme('system')
-})
 
 export const useOs = create<OsStore>((set, get) => ({
   agents: [],
@@ -94,7 +102,7 @@ export const useOs = create<OsStore>((set, get) => ({
   setTour: (tourOpen) => set({ tourOpen }),
 
   setTheme: (theme) => {
-    localStorage.setItem(THEME_KEY, theme)
+    try { localStorage.setItem(THEME_KEY, theme) } catch { /* private mode: applies for this session */ }
     applyTheme(theme)
     set({ theme })
   },
@@ -192,3 +200,19 @@ export const useOs = create<OsStore>((set, get) => ({
 if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__os = useOs
 }
+
+// Follow the OS live. Changing the Mac's appearance is the newest signal of
+// what the user wants, so it also clears an explicit Light/Dark pick and puts
+// the app back on System.
+_mq.addEventListener('change', () => {
+  if (useOs.getState().theme !== 'system') useOs.getState().setTheme('system')
+  else applyTheme('system')
+})
+
+// Keep other open tabs of the app in step with a change made in this one.
+window.addEventListener('storage', (e) => {
+  if (e.key !== THEME_KEY) return
+  const pref = readPref()
+  applyTheme(pref)
+  useOs.setState({ theme: pref })
+})

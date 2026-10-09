@@ -139,7 +139,7 @@ export function Settings() {
             ))}
           </div>
           <p className="mt-1.5 text-[12px] text-low">
-            System follows your Mac's appearance and switches with it automatically.
+            System follows your computer's appearance. Changing your computer's appearance always switches the app too, even after picking Light or Dark here.
           </p>
         </div>
       </Panel>
